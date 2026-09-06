@@ -55,11 +55,16 @@ export const processPaper = async (
   let current: Paper = { ...paper, status: 'downloading', pdfStatus: 'pending' };
   const save = async () => {
     await repo.upsertPaper(profileId, current);
-    await onProgress?.(current);
+    try {
+      await onProgress?.(current);
+    } catch {
+      // The client may have navigated away mid-run. Progress reporting is
+      // best-effort: processing continues and Firestore stays authoritative.
+    }
   };
-  await save();
 
   try {
+    await save();
     current = { ...current, ...(await acquirePdf(profileId, paper, blobs, storeName)) };
     current.status = 'processing';
     await save();
@@ -87,6 +92,29 @@ export const processPaper = async (
       await blobs.put(key, illustration.data, illustration.mime);
       current.illustrationKey = key;
       current.illustrationMime = illustration.mime;
+    }
+
+    // Publishers such as PMC serve a bot-block page instead of the PDF, so
+    // many papers never reach the index. Falling back to the generated
+    // write-up keeps chat grounded in something rather than nothing.
+    if (storeName && !current.fileSearchDocName && current.blogContent) {
+      const fallback = [
+        `Title: ${current.title}`,
+        `Authors: ${(current.authors ?? []).join(', ')}`,
+        `Year: ${current.year ?? ''}`,
+        '',
+        current.blogContent,
+        '',
+        ...(current.slides ?? []).map(s => `${s.title}: ${s.points.join(' ')}`),
+      ].join('\n');
+      const docName = await indexDocument(
+        storeName,
+        Buffer.from(fallback, 'utf8'),
+        'text/plain',
+        current.title,
+        { paperId: current.id, title: current.title, kind: 'generated-summary' }
+      );
+      if (docName) current.fileSearchDocName = docName;
     }
 
     current.status = 'converted';
