@@ -6,18 +6,38 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "tsx server/index.ts",
+    "emulator": "firebase emulators:start --only firestore",
+    "typecheck": "tsc --noEmit",
+    "dev:local": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 GOOGLE_CLOUD_PROJECT=scholarmind-local vite",
+    "docker:build": "docker build -t scholarmind ."
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/merriweather": "^5.3.0",
+    "@google-cloud/firestore": "^9.0.1",
+    "@google-cloud/storage": "^8.0.1",
+    "@google/genai": "^2.21.0",
+    "@hono/node-server": "^2.1.1",
+    "fflate": "^0.8.3",
+    "google-auth-library": "^11.0.2",
+    "hono": "^4.13.7",
+    "lucide-react": "^0.563.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "@google/genai": "^1.39.0",
-    "lucide-react": "^0.563.0",
-    "react-markdown": "^10.1.0"
+    "react-markdown": "^10.1.0",
+    "tsx": "^4.23.13"
   },
   "devDependencies": {
+    "@tailwindcss/typography": "^0.5.20",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.5.5",
+    "firebase-tools": "^15.29.0",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^3.4.19",
+    "tailwindcss-animate": "^1.0.7",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
