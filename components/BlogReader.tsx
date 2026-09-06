@@ -315,7 +315,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                )}
                <button 
                  onClick={onClose}
-                 className="p-2 text-subtle hover:text-red-500 dark:text-red-300 hover:bg-red-50 dark:bg-red-500/15 rounded-full transition-colors ml-2"
+                 className="p-2 text-subtle hover:text-red-500 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-500/15 rounded-full transition-colors ml-2"
                >
                  <X className="w-6 h-6" />
                </button>

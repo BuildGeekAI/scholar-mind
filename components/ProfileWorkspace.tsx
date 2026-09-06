@@ -498,7 +498,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
               {/* Delete Profile Button */}
               <button
                   onClick={handleDeleteProfile}
-                  className="p-2 rounded-lg hover:bg-red-50 dark:bg-red-500/15 text-subtle hover:text-red-500 dark:text-red-300 transition-colors"
+                  className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/15 text-subtle hover:text-red-500 dark:hover:text-red-300 transition-colors"
                   title="Delete Profile"
               >
                   <Trash2 className="w-5 h-5" />
