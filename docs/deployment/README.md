@@ -1,16 +1,47 @@
 # Deployment
 
-ScholarMind deploys as a single Cloud Run service that serves both the built SPA and the API. One container, one origin, so no CORS configuration.
+One Cloud Run service serves both the built SPA and the API. One container, one origin, no CORS configuration.
 
-> The previous version of this document described a static frontend and warned that "the API key is exposed to the browser." That is no longer true: the key is server-side only and never enters the client bundle.
+> The previous version of this document described a static frontend and warned that "the API key is exposed to the browser." No longer true: the key is server-side only and never enters the client bundle.
+
+---
+
+## Target topology
+
+```mermaid
+flowchart TB
+    U([Users]) --> LB["HTTPS Load Balancer"]
+    LB --> IAP{{"IAP<br/><i>verifies identity</i>"}}
+    IAP --> CR["Cloud Run<br/><i>dist/ + /api/*</i>"]
+
+    CR --> FS[("Firestore<br/><i>Native mode</i>")]
+    CR --> GCS[("Cloud Storage<br/><i>uniform access, private</i>")]
+    CR --> SM[["Secret Manager<br/><i>gemini-api-key</i>"]]
+    CR --> GEM["Gemini Developer API"]
+
+    SA(["Service account<br/>datastore.user<br/>objectAdmin<br/>secretAccessor"]) -.->|identity| CR
+
+    style IAP fill:#fef3c7,stroke:#d97706
+    style CR fill:#f0f9ff,stroke:#0284c7
+    style GEM fill:#f5f3ff,stroke:#7c3aed
+```
+
+## Build and release
+
+```mermaid
+flowchart LR
+    S["source"] --> CB["Cloud Build"]
+    CB --> D1["docker build<br/><i>multi-stage</i>"]
+    D1 --> AR[("Artifact Registry")]
+    AR --> DEP["gcloud run deploy"]
+    DEP --> CR["Cloud Run<br/><i>--no-allow-unauthenticated</i>"]
+
+    style CB fill:#f0f9ff,stroke:#0284c7
+```
+
+---
 
 ## Prerequisites
-
-- A GCP project with billing enabled
-- `gcloud` authenticated (`gcloud auth login && gcloud config set project YOUR_PROJECT`)
-- A [Google AI Studio API key](https://aistudio.google.com/apikey)
-
-Set once:
 
 ```bash
 export PROJECT_ID=$(gcloud config get-value project)
@@ -33,7 +64,7 @@ gcloud services enable \
 gcloud firestore databases create --location=$REGION
 ```
 
-Native mode. The app uses only document reads and simple ordered queries, so no composite indexes are needed initially; Firestore will name any it wants in an error message if that changes.
+Native mode. Only document reads and simple ordered queries are used, so no composite indexes are needed initially — Firestore names any it wants in an error message.
 
 ## 3. Cloud Storage
 
@@ -42,7 +73,7 @@ gsutil mb -l $REGION gs://$PROJECT_ID-scholarmind
 gsutil uniformbucketlevelaccess set on gs://$PROJECT_ID-scholarmind
 ```
 
-No public access. The bucket is reached only by the service account; the app streams bytes through `/api/blobs/*` so that ownership is checked on every read.
+No public access. Bytes are streamed through `/api/blobs/*` so ownership is checked on every read.
 
 ## 4. Secret Manager
 
@@ -50,11 +81,11 @@ No public access. The bucket is reached only by the service account; the app str
 printf 'YOUR_GEMINI_API_KEY' | gcloud secrets create gemini-api-key --data-file=-
 ```
 
-The Developer API key is required because File Search is unavailable on Vertex — see [architecture](../architecture/README.md#the-developer-api-not-vertex).
+The Developer API key is required because [File Search is unavailable on Vertex](../architecture/README.md#why-the-developer-api-not-vertex).
 
 ## 5. Service account
 
-A dedicated account, not the default compute one:
+Dedicated, not the default compute account:
 
 ```bash
 gcloud iam service-accounts create $SERVICE --display-name="ScholarMind runtime"
@@ -79,21 +110,35 @@ gcloud artifacts repositories create $SERVICE --repository-format=docker --locat
 gcloud builds submit --config cloudbuild.yaml
 ```
 
-`cloudbuild.yaml` builds the image, pushes it, and deploys with:
-
 | Flag | Why |
 | :--- | :--- |
 | `--no-allow-unauthenticated` | A public URL in front of a Gemini key is a cost liability |
 | `--timeout=300s` | Ingestion plus two-stage generation is slow |
 | `--memory=1Gi` | PDFs are buffered in memory during indexing |
 | `--min-instances=0` | Scales to zero; accepts cold starts |
-| `--set-secrets` | Key injected from Secret Manager, never baked into the image |
+| `--set-secrets` | Key injected at runtime, never baked into the image |
 
 ## 8. IAP
 
-Deployed private, the service needs IAP to give real users access — and IAP is what supplies the identity the app stores data against.
+Deployed private, the service needs IAP for real users — and IAP supplies the identity the app stores data against.
 
-1. Put an external HTTPS load balancer in front of the Cloud Run service (serverless NEG).
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant IAP
+    participant S as ScholarMind
+    U->>IAP: request
+    IAP->>IAP: authenticate Google account
+    IAP->>S: forward + x-goog-iap-jwt-assertion
+    S->>S: verify signature against IAP_AUDIENCE
+    alt verified
+        S-->>U: response scoped to that user
+    else missing or invalid
+        S-->>U: 401
+    end
+```
+
+1. Put an external HTTPS load balancer in front of the service (serverless NEG).
 2. Enable IAP on the backend service.
 3. Grant access:
 
@@ -103,23 +148,25 @@ gcloud iap web add-iam-policy-binding \
   --member=user:someone@example.com --role=roles/iap.httpsResourceAccessor
 ```
 
-4. Set `IAP_AUDIENCE` on the service to `/projects/PROJECT_NUMBER/global/backendServices/BACKEND_SERVICE_ID`.
+4. Set `IAP_AUDIENCE` to `/projects/PROJECT_NUMBER/global/backendServices/BACKEND_SERVICE_ID`.
 
-**Without `IAP_AUDIENCE` the server rejects every request in production.** That is deliberate: it will not accept an unverified identity header.
+> **Without `IAP_AUDIENCE` the server rejects every request in production.** Deliberate: it will not accept an unverified identity header.
 
-## Environment variables
+---
+
+## Environment
 
 | Variable | Required | Notes |
 | :--- | :--- | :--- |
-| `GEMINI_API_KEY` | yes | From Secret Manager |
-| `GOOGLE_CLOUD_PROJECT` | yes | Set by Cloud Run |
-| `GCS_BUCKET` | yes | Absent falls back to the local filesystem, which is ephemeral on Cloud Run |
-| `IAP_AUDIENCE` | yes | Assertions are refused without it |
-| `NODE_ENV=production` | yes | Enables IAP verification |
-| `UNPAYWALL_EMAIL` | no | Enables Unpaywall lookup; their terms require a contact address |
-| `FILE_SEARCH_STORE_PREFIX` | no | Useful for separating environments |
+| `GEMINI_API_KEY` | ✅ | From Secret Manager |
+| `GOOGLE_CLOUD_PROJECT` | ✅ | Set by Cloud Run |
+| `GCS_BUCKET` | ✅ | Absent falls back to local disk, which is ephemeral on Cloud Run |
+| `IAP_AUDIENCE` | ✅ | Assertions refused without it |
+| `NODE_ENV=production` | ✅ | Enables IAP verification |
+| `UNPAYWALL_EMAIL` | — | Enables Unpaywall lookup; their terms require a contact address |
+| `FILE_SEARCH_STORE_PREFIX` | — | Separates environments |
 
-## Verifying
+## Verify
 
 ```bash
 TOKEN=$(gcloud auth print-identity-token)
@@ -128,6 +175,6 @@ curl -H "Authorization: Bearer $TOKEN" https://YOUR_SERVICE_URL/api/healthz
 
 Expect `geminiKey: "configured"`, `firestore: "cloud"`, `blobs: "gcs"`. Unauthenticated requests should return 401.
 
-## Costs
+## Cost
 
-Cloud Run scales to zero, and Firestore and Cloud Storage usage is small. Gemini calls dominate: each processed paper is two generation calls plus speech and image generation, and File Search charges for embeddings at indexing time.
+Cloud Run scales to zero; Firestore and Storage usage is small. **Gemini dominates:** each processed paper is two generation calls plus speech and image generation, and File Search charges for embeddings at indexing time.

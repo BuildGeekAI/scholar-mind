@@ -1,86 +1,248 @@
 # Architecture
 
-ScholarMind is a React SPA served by a small Node API. The browser is a view: it holds no credentials and no persisted state. Everything durable lives in Firestore and Cloud Storage, and every model call happens server-side.
+A React SPA served by a small Node API. The browser is a view: no credentials, no persisted state. Everything durable lives in Firestore and Cloud Storage; every model call happens server-side.
 
-> This replaces an earlier design in which the browser called Gemini directly and stored everything — including base64 images and audio — in a single localStorage key. That approach leaked the API key into the client bundle and hit the ~5MB storage quota after a handful of papers.
+> Replaces an earlier design where the browser called Gemini directly and stored everything — including base64 images and audio — in one localStorage key. That leaked the API key into the client bundle and exhausted the ~5MB quota after a handful of papers.
 
-## Shape
+---
 
+## The shape
+
+```mermaid
+flowchart TB
+    B["🌐 Browser<br/>services/api.ts is its only interface"]
+
+    subgraph S["server/"]
+        RT["router.ts<br/><i>every endpoint</i>"]
+        ID["identity.ts"]
+        RP["repository.ts"]
+        BS["blobStore.ts"]
+        GM["gemini.ts"]
+        IN["ingest.ts"]
+        EX["export.ts"]
+    end
+
+    B -->|"/api/*"| RT
+    RT --> ID
+    RT --> RP
+    RT --> BS
+    RT --> IN
+    RT --> EX
+    IN --> GM
+    IN --> BS
+    IN --> RP
+
+    RP --> FS[("Firestore")]
+    BS --> BLOB[("GCS / filesystem")]
+    GM --> GEM["Gemini Developer API"]
+
+    style B fill:#fef3c7,stroke:#d97706
+    style S fill:#f0f9ff,stroke:#0284c7
+    style GEM fill:#f5f3ff,stroke:#7c3aed
 ```
-Browser
-   │  fetch /api/*
-   ▼
-Hono router  ── mounted by Vite (dev) and @hono/node-server (prod)
-   ├─ Firestore ....... profiles/{id}, /papers/{id}, /messages/{id}
-   ├─ BlobStore ....... GCS in production, filesystem locally
-   └─ Gemini Developer API
-```
-
-## Key decisions
 
 ### One router, two hosts
-`server/router.ts` is a framework-agnostic Hono app. `vite.config.ts` mounts it through `configureServer`; `server/index.ts` mounts it under `@hono/node-server` and also serves `dist/`. There is no separate development API, so there is no drift between environments.
 
-### Gemini runs server-side, behind named endpoints
-The server owns prompts and model IDs; clients send parameters. This keeps the key out of the browser, and it means the deployed surface is a fixed set of operations rather than a general proxy to your billing account. A pass-through `generateContent` endpoint would let anyone who found the URL run arbitrary prompts on your quota.
+```mermaid
+flowchart LR
+    RT["server/router.ts<br/><b>single implementation</b>"]
+    RT --> V["vite.config.ts<br/><i>configureServer</i>"]
+    RT --> P["server/index.ts<br/><i>@hono/node-server</i>"]
+    V --> DEV["Development<br/>:3000"]
+    P --> PROD["Cloud Run<br/>:8080 + dist/"]
 
-Removing the SDK from the client also cut the bundle from 792KB to 401KB.
+    style RT fill:#f0f9ff,stroke:#0284c7
+```
 
-### The Developer API, not Vertex
-Vertex would allow ADC and no API key at all, which is otherwise preferable. But **File Search is unavailable on Vertex** — the SDK's own types say so (`genai.d.ts`: *"This data type is not supported in Vertex AI"*), and so are the grounding-chunk fields that carry citations. Vertex's equivalent is RAG Engine, a different API with a different resource model.
+There is no separate development API, so there is no drift between environments. Do not add one.
 
-Since retrieval is central here, the Developer API is used in every environment, with the key in Secret Manager. The gating is **runtime-only**: both `interactions` and `fileSearchStores` construct fine under `vertexai: true` and fail at call time, so a misconfiguration surfaces as a request error rather than a startup failure.
+---
 
-### Firestore subcollections, not one document per profile
-`profiles/{id}` holds metadata; papers and messages are subcollections. The previous model kept every paper inside one profile object, so editing a title rewrote the entire library. Subcollections make writes proportional to what actually changed.
+## Data model
 
-### Blobs are keys, never inline
-`Paper` carries `illustrationKey`, `audioKey`, and `pdfKey`. Bytes never enter React state or a Firestore document. Keys are `profiles/{profileId}/{paperId}/{kind}`, and `/api/blobs/*` checks ownership against the embedded profile ID, so a key alone is not a capability.
+```mermaid
+erDiagram
+    PROFILE ||--o{ PAPER : "subcollection"
+    PROFILE ||--o{ MESSAGE : "subcollection"
+    PAPER ||--o{ BLOB : "keys reference"
+    PROFILE ||--o| STORE : "one File Search store"
 
-`BlobStore` has GCS and filesystem implementations behind one interface, which is what lets local development run without a bucket.
+    PROFILE {
+        string id PK
+        string ownerId "from IAP"
+        string title
+        string scholarName
+        string fileSearchStoreName
+    }
+    PAPER {
+        string id PK
+        string status "discovered→converted"
+        string stage "transient progress"
+        string pdfKey "→ blob"
+        string audioKey "→ blob"
+        string illustrationKey "→ blob"
+        string fileSearchDocName
+    }
+    MESSAGE {
+        string id PK
+        string role
+        string content
+        json citations
+    }
+    BLOB {
+        string key PK "profiles/{p}/{paper}/{kind}"
+        bytes data
+        string contentType
+    }
+```
+
+**Papers and messages are subcollections, not fields.** The previous model kept every paper inside one profile document, so editing a title rewrote the entire library. Writes are now proportional to what changed.
+
+**Blobs are keys, never inline.** Bytes never enter React state or a Firestore document. `/api/blobs/*` checks ownership against the profile ID embedded in the key, so a key alone is not a capability.
+
+---
 
 ## Grounding: two hard constraints
 
-Both were found by testing the live API, and both shape the pipeline.
+Both were found by testing the live API. Together they dictate the pipeline's shape.
 
 ### 1. Grounding tools are mutually exclusive
-File Search composes with neither Google Search nor URL Context:
+
+```mermaid
+flowchart TD
+    Q{"What is being asked?"}
+    Q -->|"find a scholar<br/>or paper"| GS["google_search"]
+    Q -->|"read this specific<br/>paper URL"| UC["url_context"]
+    Q -->|"answer from<br/>my library"| FSR["file_search"]
+
+    GS -.->|"❌ 400"| FSR
+    UC -.->|"❌ rejected"| FSR
+
+    style GS fill:#ecfdf5,stroke:#059669
+    style UC fill:#ecfdf5,stroke:#059669
+    style FSR fill:#ecfdf5,stroke:#059669
+```
 
 ```
 400 'google_search' and 'file_search' cannot be combined in the same request.
 ```
 
-So work is staged — `google_search` to discover, `url_context` to ingest, `file_search` to answer — and chat exposes an explicit toggle rather than guessing which the user wanted.
+So work is staged — discover, then ingest, then answer — and chat exposes an explicit toggle rather than guessing which the user meant.
 
 ### 2. File Search corrupts structured JSON
-Generating structured output *while* File Search is attached produces malformed JSON, reliably, at the first array:
+
+Attaching File Search *while* requesting structured output produces malformed JSON, reliably, at the first array:
 
 ```
 "title": "Combating Overfitting",
-"points":.",            <- should be  "points": [
+"points":.",            ← should be  "points": [
 ```
 
-The preceding text always ends in a citation marker like `[3.5]`. The citation-insertion pass rewrites the `[` that opens the array. The response is otherwise well-formed and complete, so this is model-side corruption, not a parsing fault.
+The preceding text always ends in a citation marker like `[3.5]`. The citation-insertion pass rewrites the `[` that opens the array. The response is otherwise complete and well-formed, so this is model-side corruption, not a parsing fault.
 
-**Generation therefore runs in two stages** (`server/gemini.ts`): stage one gathers grounded notes as free prose with the tool attached; stage two structures those notes with `response_format` and no tools. Any grounded structured generation needs two calls.
+**Generation therefore runs in two stages:**
+
+```mermaid
+flowchart LR
+    subgraph ONE["Stage 1 — grounded"]
+        A["tool attached<br/><i>file_search / url_context / google_search</i>"] --> B["free prose notes"]
+    end
+    subgraph TWO["Stage 2 — structured"]
+        C["no tools<br/><i>response_format</i>"] --> D["valid JSON"]
+    end
+    B --> C
+
+    style ONE fill:#f5f3ff,stroke:#7c3aed
+    style TWO fill:#ecfdf5,stroke:#059669
+```
+
+Any grounded structured generation needs two calls. See `generatePaperResources` in `server/gemini.ts`.
+
+---
 
 ## Ingestion
 
-`server/ingest.ts` per paper:
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant R as router
+    participant I as ingest
+    participant PS as paperSource
+    participant W as Web
+    participant B as BlobStore
+    participant F as File Search
+    participant G as Gemini
 
-1. `server/paperSource.ts` resolves an open-access PDF — arXiv, then Crossref for a DOI, then Unpaywall, then search grounding. Deterministic sources are tried before the model.
-2. The PDF is fetched, size-capped, and verified by magic bytes.
-3. It is stored via `BlobStore` and indexed into the profile's File Search store. `uploadToFileSearchStore` accepts a `Blob`, so no temp file or Files API hop is needed.
-4. Generation runs, then speech and illustration concurrently.
+    C->>R: POST /profiles/:id/process
+    R->>I: processPapers (SSE)
 
-Every failure degrades rather than blocks: no PDF falls back to URL context, then to search grounding. One bad paper cannot abort a run.
+    I->>PS: resolve open-access URL
+    PS->>W: arXiv → Crossref → Unpaywall
+    alt no PDF found
+        PS-->>I: unavailable
+    else URL resolved
+        I->>W: fetch PDF
+        alt bot-blocked or paywalled
+            W-->>I: HTML, not PDF
+        else
+            I->>B: store bytes
+            I->>F: index full text
+        end
+    end
+
+    I->>G: stage 1 — grounded notes
+    I->>G: stage 2 — structure them
+    I->>G: speech + illustration
+    I->>B: store audio + image
+    I-->>C: stage events throughout
+```
+
+**Everything degrades, nothing blocks.** No PDF falls back to URL context, then to search grounding. When no PDF can be indexed, the *generated write-up* is indexed instead, so the library stays searchable even for paywalled sources. One bad paper cannot abort a run.
+
+---
+
+## Why the Developer API, not Vertex
+
+Vertex would allow ADC and no API key at all, which is otherwise preferable.
+
+```mermaid
+flowchart TD
+    N{"Need File Search?"}
+    N -->|Yes| D["Gemini Developer API<br/><i>key in Secret Manager</i>"]
+    N -->|No| V["Vertex AI<br/><i>ADC, no key</i>"]
+    D --> OK["✅ retrieval + citations"]
+    V --> NO["❌ File Search unavailable<br/>❌ citation fields unsupported"]
+
+    style D fill:#ecfdf5,stroke:#059669
+    style V fill:#fef2f2,stroke:#dc2626
+```
+
+The SDK's own types say so — `genai.d.ts`: *"This data type is not supported in Vertex AI"* — and that covers the grounding fields carrying citations too. Vertex's equivalent is RAG Engine, a different API with a different resource model.
+
+Since retrieval is central here, the Developer API is used in **every** environment. The gating is **runtime-only**: both `interactions` and `fileSearchStores` construct fine under `vertexai: true` and fail at call time, so a misconfiguration surfaces as a request error rather than a startup failure.
+
+---
 
 ## Audio
 
-Gemini TTS returns headerless 24kHz mono Int16 PCM (`audio/l16`). The blob endpoint wraps it in a 44-byte RIFF header before serving, so the browser gets a playable WAV and the client needs no sample conversion. Export writes the same bytes straight out.
+Gemini TTS returns headerless 24kHz mono Int16 PCM (`audio/l16`) — not a playable file.
+
+```mermaid
+flowchart LR
+    G["Gemini TTS"] -->|"raw PCM"| S["stored as-is"]
+    S --> E["/api/blobs/*<br/><i>wraps 44-byte RIFF header</i>"]
+    E --> P["🔊 playable WAV"]
+    S --> Z["export ZIP<br/><i>same wrapping</i>"]
+
+    style E fill:#f0f9ff,stroke:#0284c7
+```
+
+Wrapping server-side means the browser needs no sample conversion of its own.
+
+---
 
 ## Identity
 
-`server/identity.ts` verifies the signed IAP JWT assertion against Google's public keys. The plain `x-goog-authenticated-user-email` header is deliberately not trusted on its own — anything able to reach the service directly could forge it. When `IAP_AUDIENCE` is unset the server refuses assertions rather than falling back. In development a stub user is injected.
+`server/identity.ts` verifies the **signed IAP JWT assertion** against Google's public keys. The plain `x-goog-authenticated-user-email` header is deliberately not trusted alone — anything able to reach the service directly could forge it. When `IAP_AUDIENCE` is unset the server **refuses** assertions rather than falling back. Development injects a stub user.
 
-Firestore rules deny all direct client access; every read and write is mediated by the API server's service account.
+Firestore rules deny all direct client access: every read and write is mediated by the API server's service account.

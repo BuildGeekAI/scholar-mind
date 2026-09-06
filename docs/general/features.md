@@ -1,31 +1,59 @@
 # Features & User Guide
 
+```mermaid
+journey
+    title Getting from a name to a studied library
+    section Discover
+      Create a profile: 5: You
+      Search a scholar or add a paper: 5: You
+    section Process
+      Select papers and press Generate: 5: You
+      Retrieve, index, write, narrate: 3: ScholarMind
+    section Study
+      Read the blog and slides: 5: You
+      Take the quiz, flip flashcards: 5: You
+      Ask questions with citations: 5: You
+    section Keep
+      Export the whole profile: 5: You
+```
+
+---
+
 ## 1. Profiles
 
-Each profile is an independent library — its own papers, chat history, theme, and File Search index. Create one per scholar or topic. Everything is stored server-side, so a profile follows you across browsers and devices.
+Each profile is an independent library — its own papers, chat history, theme, and search index. Create one per scholar or topic. Everything is stored server-side, so a profile follows you across browsers and devices.
 
 ## 2. Discovery
 
-**Search a scholar.** Enter a name ("Geoffrey Hinton") or a Google Scholar profile URL. ScholarMind returns their affiliation, research topics, and most-cited papers.
+**Search a scholar.** A name ("Geoffrey Hinton") or a Google Scholar profile URL. ScholarMind returns their affiliation, topics, and most-cited papers — and names the profile after them.
 
-**Add a paper.** Switch to "Add Paper" and enter a title to add it individually.
+**Add a paper.** Switch to "Add Paper" and enter a title.
 
 ## 3. Processing
 
-Select papers and press **Generate**. Per paper, the server:
+Select papers and press **Generate**. Progress is reported live, per paper:
 
-1. Resolves an open-access PDF — arXiv, then Crossref, then Unpaywall, then search
-2. Downloads it and indexes the full text for retrieval
-3. Writes a blog post, 4–6 slides, a 5-question quiz, and 5 flashcards
-4. Generates a narrated audio summary and cover art
+```mermaid
+flowchart LR
+    A["Finding<br/>the paper"] --> B["Downloading<br/>PDF"]
+    B --> C["Indexing<br/>full text"]
+    C --> D["Writing blog<br/>& slides"]
+    D --> E["Generating<br/>audio & art"]
+    E --> F["✅ Done"]
 
-Progress streams into the UI as each paper advances. Papers whose PDF cannot be found still produce content, grounded in web search instead — a missing PDF degrades quality, it does not block.
+    A -.->|"no open-access PDF"| D
+    B -.->|"blocked or paywalled"| D
 
-An "open access PDF" badge marks papers where the full text was retrieved; those have the most accurate generated content.
+    style F fill:#ecfdf5,stroke:#059669
+```
+
+The dotted paths matter: when a PDF cannot be retrieved, the paper still produces full content grounded in web search instead. An **open access PDF** badge marks papers where the full text was retrieved — those have the most accurate content.
+
+The status bar shows how many papers of the batch are done, and what each in-flight paper is currently doing.
 
 ## 4. Reading
 
-**Read** opens the paper viewer:
+**Read** opens the viewer:
 
 - **Blog** — the generated article, with cover art
 - **Slides** — the deck
@@ -38,14 +66,21 @@ An "open access PDF" badge marks papers where the full text was retrieved; those
 
 ## 5. Chat
 
-The Scholar Bot answers from your library, citing the documents it used.
+The Scholar Bot answers from your library and shows the sources it used — expand **"N sources from your library"** under any answer to see the document and the passage it drew from.
 
-**One grounding mode per message.** A toggle above the input switches between:
+**One grounding mode per message:**
 
-- **📚 Using your library** — semantic retrieval over your indexed papers, with citations
-- **🌐 Searching the web** — live web search for anything outside your library
+```mermaid
+flowchart LR
+    T{"Toggle"}
+    T -->|"📚 Using your library"| L["semantic retrieval<br/>over indexed papers<br/><i>with citations</i>"]
+    T -->|"🌐 Searching the web"| W["live web search<br/><i>for anything outside<br/>your library</i>"]
 
-They cannot be combined: the API rejects requests that attach both. The toggle makes the choice explicit rather than guessing.
+    style L fill:#f0f9ff,stroke:#0284c7
+    style W fill:#fffbeb,stroke:#d97706
+```
+
+They cannot be combined — the API rejects requests attaching both — so the toggle makes the choice explicit rather than guessing.
 
 You can also type `analyze [paper title]` to find, add, and process a paper from the conversation.
 
@@ -64,7 +99,7 @@ profile-name/
     illustration.jpg
     audio.wav        (playable, 24kHz mono)
     paper.pdf        (when retrieved)
-  README.md
+  README.md          (index of the library)
 ```
 
 ## 7. Themes

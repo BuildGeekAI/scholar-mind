@@ -1,48 +1,87 @@
 # 🎓 ScholarMind — AI Research Companion
 
-ScholarMind turns academic papers into an interactive, multimedia knowledge base. Point it at a scholar or a paper title, and it retrieves the open-access PDF, indexes the full text for semantic retrieval, and generates a blog post, slide deck, quiz, flashcards, narrated audio, and cover art — then lets you ask questions grounded in what it read.
+ScholarMind turns academic papers into an interactive knowledge base. Point it at a scholar or a paper title, and it retrieves the open-access PDF, indexes the full text for semantic search, and generates a blog post, slides, a quiz, flashcards, narrated audio, and cover art — then answers questions grounded in what it actually read, with citations.
 
-Built on Google Cloud: **Gemini** for generation and retrieval, **Firestore** for state, **Cloud Storage** for artifacts, and **Cloud Run** for hosting. It runs the same way locally.
-
----
-
-## ✨ What it does
-
-**Discovery.** Search a scholar by name or Google Scholar URL to pull their affiliation, topics, and most-cited papers. Or add individual papers by title.
-
-**Ingestion.** For each paper, ScholarMind resolves an open-access PDF (arXiv → Crossref → Unpaywall → search), downloads it, and indexes it into a per-profile **File Search** store. Generation is then grounded in the paper's actual full text rather than search snippets.
-
-**Generation.** A blog post, a 4–6 slide deck, a 5-question quiz with explanations, 5 flashcards, a narrated audio summary, and generated cover art.
-
-**Chat.** Ask questions answered from your indexed library, with citations back to the source documents. A toggle switches a turn to live web search instead.
-
-**Export.** Download any profile as a ZIP: `blog.md`, `slides.md`, `quiz.md`, `flashcards.csv`, `metadata.json`, the illustration, a playable `audio.wav`, and the source PDF.
+Built on Google Cloud: **Gemini** for generation and retrieval, **Firestore** for state, **Cloud Storage** for artifacts, **Cloud Run** for hosting. The same code runs locally.
 
 ---
 
-## 🏗 Architecture
+## How it works
 
-```
-Browser (no API key, no persisted data)
-   │  fetch /api/*
-   ▼
-Hono router ─── mounted by Vite in development AND Cloud Run in production
-   ├─ Firestore ....... profiles / papers / messages
-   ├─ Cloud Storage ... pdf, illustration, audio       (filesystem locally)
-   ├─ Secret Manager .. GEMINI_API_KEY                 (.env locally)
-   └─ Gemini Developer API
-        google_search → discovery
-        url_context   → reads paper URLs directly, including PDFs
-        file_search   → retrieval over your library, with citations
+```mermaid
+flowchart LR
+    U([You]) -->|"scholar name<br/>or paper title"| APP
+
+    subgraph APP["ScholarMind"]
+        direction TB
+        D["Discover<br/><i>google_search</i>"] --> I["Ingest<br/><i>url_context</i>"]
+        I --> X["Index<br/><i>file_search</i>"]
+        X --> G["Generate"]
+    end
+
+    G --> OUT["Blog · Slides · Quiz<br/>Flashcards · Audio · Art"]
+    X --> C["Chat with citations"]
+
+    style APP fill:#f0f9ff,stroke:#0284c7
+    style OUT fill:#ecfdf5,stroke:#059669
+    style C fill:#ecfdf5,stroke:#059669
 ```
 
-The browser holds no credentials and no data. One router implementation serves both environments, so there is nothing that works locally but not deployed.
+Each paper travels through a pipeline whose every step can fail without stopping the rest:
 
-See [docs/architecture](docs/architecture/README.md) for the reasoning behind these choices.
+```mermaid
+stateDiagram-v2
+    [*] --> discovered
+    discovered --> resolving: Generate
+    resolving --> fetching: open-access PDF found
+    resolving --> writing: no PDF — fall back to search
+    fetching --> indexing: PDF downloaded
+    fetching --> writing: blocked or paywalled
+    indexing --> writing: full text searchable
+    writing --> media: blog, slides, quiz, cards
+    media --> converted: audio + illustration
+    writing --> error
+    converted --> [*]
+```
 
 ---
 
-## 🤖 Models
+## Architecture
+
+```mermaid
+flowchart TB
+    B["🌐 Browser<br/><b>no API key · no stored data</b>"]
+
+    subgraph SRV["Hono router — mounted by Vite in dev AND Cloud Run in prod"]
+        R["/api/*"]
+    end
+
+    B -->|fetch| R
+
+    R --> FS[("Firestore<br/><i>profiles · papers · messages</i>")]
+    R --> GCS[("Cloud Storage<br/><i>pdf · audio · images</i>")]
+    R --> SM[["Secret Manager<br/><i>GEMINI_API_KEY</i>"]]
+    R --> GEM
+
+    subgraph GEM["Gemini Developer API"]
+        direction LR
+        T1["google_search"]
+        T2["url_context"]
+        T3["file_search"]
+    end
+
+    style B fill:#fef3c7,stroke:#d97706
+    style SRV fill:#f0f9ff,stroke:#0284c7
+    style GEM fill:#f5f3ff,stroke:#7c3aed
+```
+
+The browser holds no credentials and no state. **One router implementation** serves development and production, so nothing works locally but breaks when deployed.
+
+→ [Architecture in depth](docs/architecture/README.md)
+
+---
+
+## Models
 
 | Purpose | Model |
 | :--- | :--- |
@@ -51,83 +90,97 @@ See [docs/architecture](docs/architecture/README.md) for the reasoning behind th
 | Speech | `gemini-3.1-flash-tts-preview` |
 | Retrieval embeddings | `gemini-embedding-2` |
 
-Calls use the **Interactions API** (`ai.interactions.create`), except speech and image generation, which remain on `generateContent`.
+Text uses the **Interactions API**; speech and images stay on `generateContent`.
 
 ---
 
-## 🚀 Running locally
+## Quick start
 
-**Prerequisites:** Node 22+, a [Google AI Studio API key](https://aistudio.google.com/apikey), and Java 11+ (for the Firestore emulator).
+**Needs** Node 22+, a [Gemini API key](https://aistudio.google.com/apikey), and Java 11+ for the Firestore emulator.
 
 ```bash
 npm install
-cp .env.example .env       # then add your GEMINI_API_KEY
+cp .env.example .env      # add GEMINI_API_KEY
 ```
 
-Minimum `.env`:
+```mermaid
+flowchart LR
+    A["npm run emulator<br/><i>terminal 1</i>"] --> B[("Firestore<br/>:8085")]
+    C["npm run dev:local<br/><i>terminal 2</i>"] --> D["App + API<br/>:3000"]
+    D --> B
+    D --> E["./.data/blobs"]
+    D -.->|"always the real API"| F["Gemini"]
 
-```env
-GEMINI_API_KEY=AIzaSy...
-FIRESTORE_EMULATOR_HOST=127.0.0.1:8085
-GOOGLE_CLOUD_PROJECT=scholarmind-local
-FILE_SEARCH_STORE_PREFIX=dev-
+    style F fill:#f5f3ff,stroke:#7c3aed
 ```
 
-Then, in two terminals:
-
-```bash
-npm run emulator     # Firestore emulator on :8085
-npm run dev:local    # app on :3000
-```
-
-Check configuration at any time with `curl localhost:3000/api/healthz`:
+Verify with `curl localhost:3000/api/healthz`:
 
 ```json
 {"ok": true, "geminiKey": "configured", "firestore": "emulator", "blobs": "filesystem"}
 ```
 
-> **Note:** there is no File Search emulator. Retrieval always calls the real API, even locally — hence `FILE_SEARCH_STORE_PREFIX`, which keeps local stores easy to identify and clean up.
+> **No File Search emulator exists.** Retrieval always calls the real API, even locally. `FILE_SEARCH_STORE_PREFIX=dev-` keeps local stores identifiable.
 
-Full setup, including running against a real GCP project instead of emulators, is in [docs/development](docs/development/README.md).
+→ [Development guide](docs/development/README.md)
 
 ---
 
-## ☁️ Deploying to GCP
+## Deploy
 
 ```bash
 gcloud builds submit --config cloudbuild.yaml
 ```
 
-The service deploys private (`--no-allow-unauthenticated`) and expects IAP in front of it. Full provisioning — service account, bucket, Firestore, Secret Manager, IAP — is in [docs/deployment](docs/deployment/README.md).
+Deploys private (`--no-allow-unauthenticated`), expecting IAP in front.
+
+→ [Deployment guide](docs/deployment/README.md)
 
 ---
 
-## 📜 Scripts
+## Two constraints worth knowing
+
+Both were found by testing the live API, and both shape the design.
+
+**Grounding tools are mutually exclusive.** File Search combines with neither Google Search nor URL Context — the API rejects it outright. So work is staged, and chat exposes a visible toggle rather than guessing.
+
+**File Search corrupts structured JSON.** Its citation-insertion pass rewrites the `[` that opens a JSON array, so grounded structured generation reliably produces broken JSON. Generation therefore runs in two calls: grounded prose, then structuring with no tools.
+
+→ [The full reasoning](docs/architecture/README.md#grounding-two-hard-constraints)
+
+---
+
+## Scripts
 
 | Command | Purpose |
 | :--- | :--- |
-| `npm run dev` | Vite dev server with the API mounted |
-| `npm run dev:local` | Same, pointed at the Firestore emulator |
+| `npm run dev:local` | App + API against the emulator |
 | `npm run emulator` | Firestore emulator |
 | `npm run build` | Production client build |
-| `npm start` | Production server (serves `dist/` plus the API) |
+| `npm start` | Production server |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run docker:build` | Build the container image |
+| `npm run docker:build` | Container image |
 
----
-
-## 📁 Layout
+## Layout
 
 ```
-server/       API: router, Firestore repository, blob store, Gemini, ingestion, export
+server/       router · repository · blobStore · gemini · ingest · export
 components/   React UI
 services/     api.ts — the browser's only server interface
-docs/         Architecture, deployment, development, features, SDLC
-scripts/      API verification spikes
+docs/         architecture · development · deployment · features · sdlc
+scripts/      live API verification spikes
 ```
 
----
+## Docs
 
-## 📄 License
+| | |
+| :--- | :--- |
+| [Architecture](docs/architecture/README.md) | Design and the reasoning behind it |
+| [Development](docs/development/README.md) | Local setup, conventions, debugging |
+| [Deployment](docs/deployment/README.md) | GCP provisioning end to end |
+| [Features](docs/general/features.md) | User guide |
+| [SDLC](docs/sdlc/README.md) | How this project is planned and built |
+
+## License
 
 MIT. Open source for educational and research purposes.
