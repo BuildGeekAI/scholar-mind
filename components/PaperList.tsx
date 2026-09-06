@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Paper } from '../types';
-import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2, Database, Youtube, Globe, Library, Mic, Video, FileType } from 'lucide-react';
+import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2, Database, Youtube, Globe, Library, Mic, Video, FileType, Quote as QuoteIcon } from 'lucide-react';
 import { playAudioUrl, stopAudio } from '../utils/audio';
 import { blobUrl } from '../services/api';
 
@@ -16,6 +16,7 @@ interface PaperListProps {
   busy: boolean;
   onReadBlog: (paper: Paper) => void;
   onFetchCitations: (paper: Paper) => void;
+  onCite: (paper: Paper) => void;
 }
 
 type Stage = { label: string; percent: number };
@@ -41,13 +42,13 @@ const ARTIFACT_STAGES: Record<string, Stage> = {
 
 /** How each kind of source announces itself on the card. */
 const KINDS = {
-  paper:     { icon: FileText,  label: 'Paper',     tone: 'bg-slate-100 text-slate-600 border-slate-200' },
-  web:       { icon: Globe,     label: 'Web',       tone: 'bg-sky-50 text-sky-700 border-sky-200' },
-  wikipedia: { icon: Library,   label: 'Wikipedia', tone: 'bg-stone-100 text-stone-700 border-stone-300' },
-  youtube:   { icon: Youtube,   label: 'YouTube',   tone: 'bg-red-50 text-red-700 border-red-200' },
-  video:     { icon: Video,     label: 'Video',     tone: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200' },
-  audio:     { icon: Mic,       label: 'Audio',     tone: 'bg-amber-50 text-amber-700 border-amber-200' },
-  document:  { icon: FileType,  label: 'Document',  tone: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  paper:     { icon: FileText,  label: 'Paper',     tone: 'bg-panel-2 text-muted border-line' },
+  web:       { icon: Globe,     label: 'Web',       tone: 'bg-sky-50 dark:bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-200' },
+  wikipedia: { icon: Library,   label: 'Wikipedia', tone: 'bg-stone-100 dark:bg-stone-500/20 text-stone-700 dark:text-stone-300 border-stone-300' },
+  youtube:   { icon: Youtube,   label: 'YouTube',   tone: 'bg-red-50 dark:bg-red-500/15 text-red-700 dark:text-red-300 border-red-200' },
+  video:     { icon: Video,     label: 'Video',     tone: 'bg-fuchsia-50 dark:bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-300 border-fuchsia-200' },
+  audio:     { icon: Mic,       label: 'Audio',     tone: 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-200' },
+  document:  { icon: FileType,  label: 'Document',  tone: 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-200' },
 } as const;
 
 const kindOf = (paper: Paper) => KINDS[paper.kind ?? 'paper'] ?? KINDS.paper;
@@ -70,7 +71,8 @@ const PaperList: React.FC<PaperListProps> = ({
     onGenerate,
     busy,
     onReadBlog, 
-    onFetchCitations 
+    onFetchCitations,
+    onCite
 }) => {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState<string>('All Years');
@@ -153,12 +155,12 @@ const PaperList: React.FC<PaperListProps> = ({
 
   if (papers.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-slate-400 glass-panel rounded-2xl border border-white/50">
-        <div className="bg-slate-100 p-4 rounded-full mb-4">
+      <div className="flex flex-col items-center justify-center h-64 text-subtle glass-panel rounded-2xl border border-line/50">
+        <div className="bg-panel-2 p-4 rounded-full mb-4">
             <FileText className="w-8 h-8 opacity-40" />
         </div>
-        <p className="font-medium text-slate-500">No papers found yet.</p>
-        <p className="text-sm text-slate-400 mt-1">Start by searching for a scholar above.</p>
+        <p className="font-medium text-muted">No papers found yet.</p>
+        <p className="text-sm text-subtle mt-1">Start by searching for a scholar above.</p>
       </div>
     );
   }
@@ -167,27 +169,27 @@ const PaperList: React.FC<PaperListProps> = ({
     <div className="space-y-6 pb-20">
       
       {/* Control Bar */}
-      <div className="glass-panel p-3 rounded-2xl border border-white/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4 sticky top-0 z-10 shadow-sm backdrop-blur-md">
+      <div className="glass-panel p-3 rounded-2xl border border-line/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4 sticky top-0 z-10 shadow-sm backdrop-blur-md">
          <div className="flex items-center gap-3">
              <button 
                onClick={onSelectAll}
-               className="flex items-center gap-2 text-sm font-semibold text-slate-700 hover:text-scholarly-700 transition-colors px-2"
+               className="flex items-center gap-2 text-sm font-semibold text-ink hover:text-scholarly-700 transition-colors px-2"
              >
                 {isAllSelected ? (
                     <CheckSquare className="w-5 h-5 text-scholarly-600" />
                 ) : isSomeSelected ? (
                     <div className="relative w-5 h-5 flex items-center justify-center">
-                        <SquareIcon className="w-5 h-5 text-slate-400 absolute" />
+                        <SquareIcon className="w-5 h-5 text-subtle absolute" />
                         <div className="w-2.5 h-2.5 bg-scholarly-600 rounded-sm z-10"></div>
                     </div>
                 ) : (
-                    <SquareIcon className="w-5 h-5 text-slate-400" />
+                    <SquareIcon className="w-5 h-5 text-subtle" />
                 )}
                 <span className="hidden sm:inline">Select All</span>
              </button>
              
              {selectedIds.size > 0 && (
-                 <div className="h-5 w-px bg-slate-200 mx-1"></div>
+                 <div className="h-5 w-px bg-line mx-1"></div>
              )}
              
              {selectedIds.size > 0 && (
@@ -196,9 +198,9 @@ const PaperList: React.FC<PaperListProps> = ({
                         onClick={onIndex}
                         disabled={busy}
                         title="Embed these papers into the search index so chat can cite them"
-                        className="flex items-center gap-2 bg-white text-slate-700 border border-slate-200 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 bg-panel text-ink border border-line px-4 py-2 rounded-xl text-sm font-semibold hover:bg-surface hover:border-line transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                      >
-                        <Database className="w-4 h-4 text-emerald-600" />
+                        <Database className="w-4 h-4 text-emerald-600 dark:text-emerald-300" />
                         Index ({selectedIds.size})
                      </button>
                      <button
@@ -217,11 +219,11 @@ const PaperList: React.FC<PaperListProps> = ({
          {/* Filters */}
          <div className="flex flex-wrap items-center gap-2 justify-end">
             <div className="relative group">
-               <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 group-hover:text-scholarly-500 transition-colors pointer-events-none" />
+               <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle group-hover:text-scholarly-500 transition-colors pointer-events-none" />
                <select
                  value={selectedYear}
                  onChange={(e) => setSelectedYear(e.target.value)}
-                 className="pl-9 pr-8 py-2 bg-white/50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 focus:outline-none focus:ring-2 focus:ring-scholarly-200 cursor-pointer appearance-none hover:bg-white transition-all shadow-sm"
+                 className="pl-9 pr-8 py-2 bg-panel/50 border border-line rounded-xl text-xs font-semibold text-muted focus:outline-none focus:ring-2 focus:ring-scholarly-200 cursor-pointer appearance-none hover:bg-panel transition-all shadow-sm"
                >
                  <option value="All Years">All Years</option>
                  {uniqueYears.map(year => (
@@ -234,7 +236,7 @@ const PaperList: React.FC<PaperListProps> = ({
                <select
                  value={selectedAuthor}
                  onChange={(e) => setSelectedAuthor(e.target.value)}
-                 className="pl-3 pr-8 py-2 bg-white/50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 focus:outline-none focus:ring-2 focus:ring-scholarly-200 cursor-pointer appearance-none hover:bg-white transition-all shadow-sm max-w-[140px] truncate"
+                 className="pl-3 pr-8 py-2 bg-panel/50 border border-line rounded-xl text-xs font-semibold text-muted focus:outline-none focus:ring-2 focus:ring-scholarly-200 cursor-pointer appearance-none hover:bg-panel transition-all shadow-sm max-w-[140px] truncate"
                >
                  <option value="All Authors">All Authors</option>
                  {uniqueAuthors.map(author => (
@@ -246,9 +248,9 @@ const PaperList: React.FC<PaperListProps> = ({
       </div>
       
       {filteredPapers.length === 0 ? (
-         <div className="flex flex-col items-center justify-center py-12 glass-panel rounded-2xl border border-dashed border-slate-300">
-            <Filter className="w-8 h-8 text-slate-300 mb-2" />
-            <p className="text-slate-500 text-sm font-medium">No papers match your filters.</p>
+         <div className="flex flex-col items-center justify-center py-12 glass-panel rounded-2xl border border-dashed border-line">
+            <Filter className="w-8 h-8 text-subtle mb-2" />
+            <p className="text-muted text-sm font-medium">No papers match your filters.</p>
             <button 
               onClick={() => { setSelectedYear('All Years'); setSelectedAuthor('All Authors'); }}
               className="mt-3 text-scholarly-600 text-sm font-bold hover:text-scholarly-700 hover:underline"
@@ -269,7 +271,7 @@ const PaperList: React.FC<PaperListProps> = ({
           return (
           <div 
           key={paper.id} 
-          className={`bg-white/80 backdrop-blur-sm rounded-2xl border p-5 shadow-sm hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.01] transition-all duration-300 relative overflow-hidden group ${isSelected ? 'border-scholarly-300 ring-2 ring-scholarly-100' : 'border-white/60'}`}
+          className={`bg-panel/80 backdrop-blur-sm rounded-2xl border p-5 shadow-sm hover:shadow-xl hover:shadow-black/5 dark:hover:shadow-black/40 hover:scale-[1.01] transition-all duration-300 relative overflow-hidden group ${isSelected ? 'border-scholarly-300 ring-2 ring-scholarly-100' : 'border-line/60'}`}
         >
           {/* Progress Bar Background */}
           {isProcessing && (
@@ -280,7 +282,7 @@ const PaperList: React.FC<PaperListProps> = ({
                  }`}
                  style={{ width: `${stageOf(paper).percent}%` }}
                >
-                 <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                 <div className="absolute inset-0 bg-panel/20 animate-pulse"></div>
                </div>
             </div>
           )}
@@ -296,7 +298,7 @@ const PaperList: React.FC<PaperListProps> = ({
                     {isSelected ? (
                         <CheckSquare className="w-6 h-6 text-scholarly-600" />
                     ) : (
-                        <SquareIcon className="w-6 h-6 text-slate-300 hover:text-scholarly-400 transition-colors" />
+                        <SquareIcon className="w-6 h-6 text-subtle hover:text-scholarly-400 transition-colors" />
                     )}
                 </button>
             </div>
@@ -304,7 +306,7 @@ const PaperList: React.FC<PaperListProps> = ({
             {/* Thumbnail Image or Placeholder */}
             {paper.status === 'converted' && paper.illustrationKey ? (
               <div 
-                className="hidden sm:block w-32 h-24 shrink-0 rounded-xl bg-slate-100 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity border border-slate-100 shadow-inner group-hover:shadow-md"
+                className="hidden sm:block w-32 h-24 shrink-0 rounded-xl bg-panel-2 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity border border-line shadow-inner group-hover:shadow-md"
                 onClick={() => onReadBlog(paper)}
               >
                 <img 
@@ -315,13 +317,13 @@ const PaperList: React.FC<PaperListProps> = ({
                 />
               </div>
             ) : isProcessing ? (
-               <div className="hidden sm:flex w-32 h-24 shrink-0 rounded-xl bg-slate-50 border border-slate-100 items-center justify-center flex-col gap-2">
+               <div className="hidden sm:flex w-32 h-24 shrink-0 rounded-xl bg-surface border border-line items-center justify-center flex-col gap-2">
                  {generating ? (
                     <Sparkles className="w-6 h-6 animate-pulse text-purple-500" />
                  ) : (
                     <Database className="w-6 h-6 animate-pulse text-emerald-500" />
                  )}
-                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                 <span className="text-[10px] font-bold text-subtle uppercase tracking-wider">
                     {generating ? 'AI Magic' : 'Indexing'}
                  </span>
                </div>
@@ -349,7 +351,7 @@ const PaperList: React.FC<PaperListProps> = ({
                        className={`flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors border ${
                            expandedCitations.has(paper.id)
                            ? 'bg-scholarly-50 text-scholarly-700 border-scholarly-200' 
-                           : 'bg-transparent text-slate-500 border-transparent hover:bg-slate-50 hover:border-slate-200'
+                           : 'bg-transparent text-muted border-transparent hover:bg-surface hover:border-line'
                        }`}
                     >
                         {loadingCitations.has(paper.id) ? (
@@ -371,7 +373,7 @@ const PaperList: React.FC<PaperListProps> = ({
                         target="_blank"
                         rel="noreferrer noopener"
                         onClick={e => e.stopPropagation()}
-                        className="text-xs font-semibold text-slate-500 hover:text-scholarly-700 hover:underline truncate max-w-[16rem]"
+                        className="text-xs font-semibold text-muted hover:text-scholarly-700 hover:underline truncate max-w-[16rem]"
                       >
                         {(() => { try { return new URL(paper.sourceUrl).hostname.replace(/^www\./, ''); } catch { return 'source'; } })()}
                       </a>
@@ -381,76 +383,76 @@ const PaperList: React.FC<PaperListProps> = ({
                   {/* Status Icon Top Right */}
                    <div className="shrink-0">
                      {paper.status === 'converted' ? (
-                       <div className="bg-green-100 p-1 rounded-full">
-                         <CheckCircle className="w-4 h-4 text-green-600" />
+                       <div className="bg-green-100 dark:bg-green-500/20 p-1 rounded-full">
+                         <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-300" />
                        </div>
                      ) : paper.status === 'error' ? (
-                        <div className="bg-red-100 p-1 rounded-full">
-                         <AlertCircle className="w-4 h-4 text-red-500" />
+                        <div className="bg-red-100 dark:bg-red-500/20 p-1 rounded-full">
+                         <AlertCircle className="w-4 h-4 text-red-500 dark:text-red-300" />
                        </div>
                      ) : indexing ? (
                        <div className="relative">
                          <div className="absolute inset-0 bg-emerald-200 rounded-full animate-ping opacity-75"></div>
-                         <Database className="relative w-5 h-5 text-emerald-600" />
+                         <Database className="relative w-5 h-5 text-emerald-600 dark:text-emerald-300" />
                        </div>
                      ) : generating ? (
                        <div className="relative">
                          <div className="absolute inset-0 bg-purple-200 rounded-full animate-ping opacity-75"></div>
-                         <Sparkles className="relative w-5 h-5 text-purple-600" />
+                         <Sparkles className="relative w-5 h-5 text-purple-600 dark:text-purple-300" />
                        </div>
                      ) : (
-                       <div className="w-5 h-5 rounded-full border-2 border-slate-200 bg-slate-50"></div>
+                       <div className="w-5 h-5 rounded-full border-2 border-line bg-surface"></div>
                      )}
                   </div>
                 </div>
                 
-                <h3 className="text-lg font-bold text-slate-900 leading-tight mb-1 truncate hover:text-scholarly-700 transition-colors cursor-pointer" onClick={() => onToggleSelect(paper.id)}>
+                <h3 className="text-lg font-bold text-ink leading-tight mb-1 truncate hover:text-scholarly-700 transition-colors cursor-pointer" onClick={() => onToggleSelect(paper.id)}>
                   {paper.title}
                 </h3>
                 
-                <div className="mb-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide line-clamp-1">
+                <div className="mb-2.5 text-xs font-semibold text-muted uppercase tracking-wide line-clamp-1">
                   {paper.authors.length > 0 ? paper.authors.join(", ") : "Unknown Authors"}
                 </div>
 
-                <p className="text-sm text-slate-600 line-clamp-2 mb-4 leading-relaxed">
+                <p className="text-sm text-muted line-clamp-2 mb-4 leading-relaxed">
                   {paper.summary}
                 </p>
 
                 {/* Expanded Citation List */}
                 {expandedCitations.has(paper.id) && (
-                    <div className="mt-4 mb-4 bg-slate-50/80 backdrop-blur-sm rounded-xl p-4 border border-slate-200 animate-in slide-in-from-top-2 fade-in shadow-inner">
+                    <div className="mt-4 mb-4 bg-surface/80 backdrop-blur-sm rounded-xl p-4 border border-line animate-in slide-in-from-top-2 fade-in shadow-inner">
                         <div className="flex items-center justify-between mb-3">
-                            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                            <h4 className="text-xs font-bold text-muted uppercase tracking-wider flex items-center gap-2">
                                 <Quote className="w-3 h-3" /> Citing Papers
                             </h4>
                         </div>
                         {paper.citingPapers && paper.citingPapers.length > 0 ? (
                             <div className="space-y-3">
                                 {paper.citingPapers.map((cite, idx) => (
-                                    <div key={idx} className="bg-white p-3 rounded-lg border border-slate-100 text-sm shadow-sm hover:shadow-md transition-shadow">
-                                        <div className="font-semibold text-slate-800">{cite.title}</div>
-                                        <div className="text-xs text-slate-500 mt-1 flex gap-2">
-                                            <span className="bg-slate-100 px-1.5 rounded text-slate-600 font-medium">{cite.year}</span>
+                                    <div key={idx} className="bg-panel p-3 rounded-lg border border-line text-sm shadow-sm hover:shadow-md transition-shadow">
+                                        <div className="font-semibold text-ink">{cite.title}</div>
+                                        <div className="text-xs text-muted mt-1 flex gap-2">
+                                            <span className="bg-panel-2 px-1.5 rounded text-muted font-medium">{cite.year}</span>
                                             <span>{cite.authors.join(", ")}</span>
                                         </div>
-                                        <div className="text-xs text-slate-600 mt-2 italic pl-2 border-l-2 border-scholarly-200">
+                                        <div className="text-xs text-muted mt-2 italic pl-2 border-l-2 border-scholarly-200">
                                             "{cite.summary}"
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         ) : (
-                            <p className="text-sm text-slate-400 italic text-center py-2">No significant citing papers found.</p>
+                            <p className="text-sm text-subtle italic text-center py-2">No significant citing papers found.</p>
                         )}
                     </div>
                 )}
               </div>
               
-              <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-slate-100/50">
+              <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-line/50">
                 {/* Indexing state is independent of generation, so it gets its own chip. */}
                 {indexed && (
                    <span
-                     className="text-xs flex items-center gap-1.5 text-emerald-700 font-semibold px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-100"
+                     className="text-xs flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300 font-semibold px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-500/15 border border-emerald-100"
                      title={
                        (paper.indexedKind === 'summary'
                          ? 'No open-access PDF, so the write-up was embedded instead'
@@ -465,18 +467,18 @@ const PaperList: React.FC<PaperListProps> = ({
                    </span>
                 )}
                 {paper.indexStatus === 'error' && !indexed && !indexing && (
-                   <span className="text-xs flex items-center gap-1.5 text-amber-700 font-semibold px-2.5 py-1 rounded-full bg-amber-50 border border-amber-100">
+                   <span className="text-xs flex items-center gap-1.5 text-amber-700 dark:text-amber-300 font-semibold px-2.5 py-1 rounded-full bg-amber-50 dark:bg-amber-500/15 border border-amber-100">
                      <AlertCircle className="w-3 h-3" /> Not indexed
                    </span>
                 )}
                 {paper.status === 'discovered' && !isProcessing && (
-                   <span className="text-xs flex items-center gap-1.5 text-slate-400 font-medium px-2 py-1 rounded-full bg-slate-50 border border-slate-100">
-                     <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span> Ready to Analyze
+                   <span className="text-xs flex items-center gap-1.5 text-subtle font-medium px-2 py-1 rounded-full bg-surface border border-line">
+                     <span className="w-1.5 h-1.5 rounded-full bg-subtle"></span> Ready to Analyze
                    </span>
                 )}
                 {isProcessing && (
                   <span className={`text-xs flex items-center gap-1.5 font-bold px-2 py-1 rounded-full ${
-                    generating ? 'text-purple-600 bg-purple-50' : 'text-emerald-700 bg-emerald-50'
+                    generating ? 'text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-500/15' : 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/15'
                   }`}>
                     <Loader2 className="w-3 h-3 animate-spin" /> {stageOf(paper).label}
                   </span>
@@ -492,7 +494,7 @@ const PaperList: React.FC<PaperListProps> = ({
                     
                     <button 
                        onClick={() => onReadBlog(paper)} 
-                       className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 hover:border-slate-300 px-4 py-2 rounded-xl transition-all"
+                       className="flex items-center gap-1.5 text-xs font-semibold text-ink bg-panel border border-line hover:bg-surface hover:border-line px-4 py-2 rounded-xl transition-all"
                     >
                       <MonitorPlay className="w-3.5 h-3.5" /> Slides
                     </button>
@@ -502,8 +504,8 @@ const PaperList: React.FC<PaperListProps> = ({
                         onClick={(e) => handlePlayAudio(e, paper)}
                         className={`flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-xl transition-all border ${
                           playingId === paper.id 
-                            ? 'text-red-600 bg-red-50 border-red-100 hover:bg-red-100' 
-                            : 'text-slate-700 bg-white border-slate-200 hover:bg-slate-50'
+                            ? 'text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-500/15 border-red-100 hover:bg-red-100 dark:bg-red-500/20' 
+                            : 'text-ink bg-panel border-line hover:bg-surface'
                         }`}
                       >
                          {playingId === paper.id ? (
@@ -519,8 +521,15 @@ const PaperList: React.FC<PaperListProps> = ({
                     )}
                   </>
                 )}
+                <button
+                  onClick={() => onCite(paper)}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-muted bg-panel border border-line hover:text-ink hover:border-scholarly-300 px-3 py-2 rounded-xl transition-all"
+                  title="Copy a citation in BibTeX, APA, MLA, Chicago, Harvard or RIS"
+                >
+                  <QuoteIcon className="w-3.5 h-3.5" /> Cite
+                </button>
                 {paper.status === 'error' && (
-                   <span className="text-xs flex items-center gap-1 text-red-500 font-medium">
+                   <span className="text-xs flex items-center gap-1 text-red-500 dark:text-red-300 font-medium">
                      <AlertCircle className="w-3 h-3" /> Failed
                    </span>
                 )}

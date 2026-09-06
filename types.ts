@@ -86,6 +86,21 @@ export interface Paper {
   extractedText?: string;
   /** Duration for audio and video, in seconds, when the model reports one. */
   durationSeconds?: number;
+
+  /**
+   * Bibliographic detail from Crossref, fetched once. Never model-generated:
+   * an invented volume number reads as authoritative and is worse than none.
+   */
+  citationMeta?: {
+    doi?: string;
+    containerTitle?: string;
+    publisher?: string;
+    volume?: string;
+    issue?: string;
+    page?: string;
+    issued?: string;
+    type?: string;
+  };
 }
 
 export interface Citation {

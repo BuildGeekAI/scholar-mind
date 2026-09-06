@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 
 export interface User {
@@ -23,7 +24,50 @@ const client = new OAuth2Client();
  * The plain email header is deliberately NOT trusted on its own: anything able to
  * reach the service directly could forge it.
  */
+/**
+ * Programmatic access — the MCP server, scripts, anything without a browser
+ * session. The key is compared in constant time and identifies a single
+ * configured user, so an integration reads and writes exactly the library the
+ * browser sees.
+ */
+const apiKey = process.env.SCHOLARMIND_API_KEY || '';
+const apiUser: User = {
+  id: process.env.API_USER_ID || DEV_USER.id,
+  email: process.env.API_USER_EMAIL || 'api@localhost',
+};
+
+/** Length-independent comparison, so a wrong key leaks nothing by timing. */
+const secretsMatch = (a: string, b: string): boolean => {
+  if (!a || !b) return false;
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  // timingSafeEqual throws on a length mismatch, which would itself be a leak.
+  const padded = Buffer.alloc(Math.max(left.length, right.length));
+  const other = Buffer.alloc(padded.length);
+  left.copy(padded);
+  right.copy(other);
+  return timingSafeEqual(padded, other) && left.length === right.length;
+};
+
+type KeyOutcome = 'valid' | 'invalid' | 'absent';
+
+const checkApiKey = (headers: Headers): KeyOutcome => {
+  const bearer = headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+  const presented = headers.get('x-api-key') || bearer || '';
+  if (!presented) return 'absent';
+  return apiKey && secretsMatch(presented, apiKey) ? 'valid' : 'invalid';
+};
+
 export const resolveUser = async (headers: Headers): Promise<User | null> => {
+  // Checked before anything else, so an API key works in every environment.
+  const outcome = checkApiKey(headers);
+  if (outcome === 'valid') return apiUser;
+
+  // A key that was offered and rejected is refused outright, even in
+  // development. Falling through to the dev user would mean a misconfigured
+  // integration appeared to work locally and failed only in production.
+  if (outcome === 'invalid') return null;
+
   if (!isProduction) return DEV_USER;
 
   const assertion = headers.get(IAP_JWT_HEADER);

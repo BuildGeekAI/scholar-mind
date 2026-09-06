@@ -4,7 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ScholarMind - Research to Blog Converter</title>
-  </head>
+    <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('scholarMind_theme');
+        var dark = stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+      } catch (e) {}
+    })();
+  </script>
+</head>
   <body class="bg-slate-50 text-slate-900 h-screen overflow-hidden selection:bg-scholarly-200 selection:text-scholarly-900">
     <div id="root" class="h-full"></div>
     <script type="module" src="/index.tsx"></script>

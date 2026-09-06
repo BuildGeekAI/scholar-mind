@@ -42,8 +42,8 @@ const send = (path: string, method: string, body?: unknown) =>
 // --- Profiles ---------------------------------------------------------------
 export const listProfiles = (): Promise<ProfileRecord[]> => send('/profiles', 'GET');
 
-export const createProfile = (title: string, emoji: string, theme: string): Promise<ProfileRecord> =>
-  send('/profiles', 'POST', { title, emoji, theme });
+export const createProfile = (title: string, emoji: string): Promise<ProfileRecord> =>
+  send('/profiles', 'POST', { title, emoji });
 
 export const getProfile = (
   id: string
@@ -54,6 +54,24 @@ export const updateProfile = (id: string, patch: Partial<ProfileRecord>): Promis
   send(`/profiles/${id}`, 'PATCH', patch);
 
 export const deleteProfile = (id: string): Promise<void> => send(`/profiles/${id}`, 'DELETE');
+
+// --- Discovery (the landing page) -------------------------------------------
+export interface DiscoveredProfile {
+  id: string;
+  title: string;
+  emoji: string;
+  scholarName?: string;
+  affiliation?: string;
+  topics: string[];
+  sourceCount: number;
+  indexedCount: number;
+  updatedAt: number;
+  /** True when the scholar identity matches, rather than just the text. */
+  exact: boolean;
+}
+
+export const discover = (query: string): Promise<{ query: string; matches: DiscoveredProfile[] }> =>
+  send(`/discover?q=${encodeURIComponent(query)}`, 'GET');
 
 // --- Papers -----------------------------------------------------------------
 /** A profile the user already has for this scholar, returned with a 409. */
@@ -105,6 +123,31 @@ export const clearMessages = (profileId: string): Promise<void> =>
 export const blobUrl = (key?: string): string | undefined => (key ? `/api/blobs/${key}` : undefined);
 
 export const exportUrl = (profileId: string): string => `/api/profiles/${profileId}/export`;
+
+// --- Citations --------------------------------------------------------------
+export type CitationStyle = 'bibtex' | 'apa' | 'mla' | 'chicago' | 'harvard' | 'ris';
+
+export const CITATION_STYLES: CitationStyle[] = ['bibtex', 'apa', 'mla', 'chicago', 'harvard', 'ris'];
+
+export interface PaperCitations {
+  id: string;
+  title: string;
+  /** False when Crossref had no matching record, so fields are thin but honest. */
+  hasBibliographicData: boolean;
+  citations: Record<CitationStyle, string>;
+}
+
+export const paperCitations = (profileId: string, paperId: string): Promise<PaperCitations> =>
+  send(`/profiles/${profileId}/papers/${paperId}/citation`, 'GET');
+
+export const bibliography = (
+  profileId: string,
+  style: CitationStyle
+): Promise<{ style: CitationStyle; count: number; text: string }> =>
+  send(`/profiles/${profileId}/citations?style=${style}`, 'GET');
+
+export const bibliographyUrl = (profileId: string, style: CitationStyle): string =>
+  `/api/profiles/${profileId}/citations?style=${style}&download=1`;
 
 export const speak = async (text: string, voice: string): Promise<Blob | null> => {
   const res = await fetch('/api/tts', {
@@ -172,11 +215,19 @@ export const processPapers = (
   });
 
 export const streamChat = (
-  profileId: string,
+  /** null asks across every library — what the landing page does. */
+  profileId: string | null,
   message: string,
   useWebSearch: boolean,
   onDelta: (text: string) => void,
-  onDone?: (info: { grounded: boolean; fellBack?: boolean; indexed?: number; pending?: number }) => void,
+  onDone?: (info: {
+    grounded: boolean;
+    fellBack?: boolean;
+    indexed?: number;
+    pending?: number;
+    searchedLibraries?: string[];
+    skippedLibraries?: number;
+  }) => void,
   onError?: (message: string) => void,
   onCitations?: (citations: Citation[]) => void
 ): Promise<void> =>

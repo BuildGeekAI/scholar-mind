@@ -226,6 +226,105 @@ its full text.
 
 ---
 
+## Sources beyond papers
+
+A library holds papers, web pages, Wikipedia articles, YouTube videos,
+recordings and uploaded documents. One pipeline handles all of them because
+every kind is **normalised to text once, at add time**.
+
+```mermaid
+flowchart TD
+    IN(["Something added"]) --> K{"Kind?"}
+
+    K -->|paper| P["resolve → fetch PDF"]
+    K -->|"web / wikipedia"| U["url_context"]
+    K -->|"youtube"| V["{type:'video', uri}<br/><i>no download</i>"]
+    K -->|"upload"| F["Files API<br/><i>wait for ACTIVE</i>"]
+
+    U --> X["extractedText"]
+    V --> X
+    F --> X
+    P --> B["PDF bytes"]
+
+    X --> IDX["index the text"]
+    B --> IDX2["index the bytes"]
+    X --> GEN["generate from the transcript<br/><i>never re-read</i>"]
+
+    style X fill:#f0f9ff,stroke:#0284c7
+    style GEN fill:#ecfdf5,stroke:#059669
+```
+
+Extraction happens once. Generation reads `extractedText` rather than watching
+the video again — which is what keeps a new modality from touching the rest of
+the pipeline at all.
+
+Three findings from the spike shaped this:
+
+| Finding | Consequence |
+| :--- | :--- |
+| Interactions rejects `parts` — `400 Unknown parameter 'parts'` | Media uses its typed content blocks: `{type:'video'\|'audio'\|'document', uri}` |
+| A YouTube URL works as a `video` block directly | No download, no storage, no transcoding |
+| Media **does** compose with `response_format`, unlike grounding tools | Title and summary come back structured in one call |
+
+Uploaded bytes live in the blob store like everything else. The Files API copy
+is deleted as soon as extraction finishes rather than waiting out its 48-hour
+retention.
+
+---
+
+## Citations
+
+Formatted deterministically from stored metadata, enriched only from Crossref.
+
+**Never from the model.** A hallucinated volume number or page range is worse
+than a missing one: it looks authoritative, gets pasted into a bibliography, and
+is wrong. Every field either came from the source, from Crossref's record of it,
+or is omitted.
+
+The Crossref match is exact-normalised-title only, and that strictness earns its
+keep. Searching *"Attention Is All You Need"* returns *"Is Attention All You
+Need?"* as its top hit — a different paper. A looser match would have attributed
+that book chapter's DOI and pages to the Transformer paper.
+
+The honest limitation: Crossref's free search often fails to surface a record
+that exists. Neither `query.bibliographic` nor `query.title` returns the *Annals
+of Mathematics* record for *"PRIMES is in P"*, even at 20 rows. So enrichment is
+best-effort, and the UI distinguishes "this came from Crossref" from "no record
+matched, and nothing was invented".
+
+---
+
+## Two ways in
+
+```mermaid
+flowchart LR
+    B["Browser<br/><i>session</i>"] --> R
+    C["curl / scripts<br/><i>x-api-key</i>"] --> R
+    M["MCP server<br/><i>stdio → HTTP</i>"] --> R
+    R["One Hono router"]
+
+    style R fill:#f0f9ff,stroke:#0284c7
+```
+
+The MCP server is a **client of the HTTP API**, not a second implementation, so
+an agent and a person cannot drift apart on what a library contains.
+
+Authentication has three outcomes rather than two:
+
+| Presented | Result |
+| :--- | :--- |
+| Correct key | The API user |
+| **Wrong key** | **401, in every environment — including development** |
+| No key | The dev user locally, IAP in production |
+
+Refusing a wrong key locally is the point. The obvious implementation falls
+through to the dev user on a mismatch, so a misconfigured integration works
+perfectly on a laptop and fails only once deployed.
+
+→ [API & MCP reference](../api/README.md)
+
+---
+
 ## De-duplicating papers across profiles
 
 Two profiles holding the same paper used to resolve it twice and download it
@@ -241,10 +340,12 @@ Verified against the live API:
 | `metadataFilter: 'year=2017'` (recognised key, same documents) | filters **correctly** |
 | `metadataFilter: 'THIS IS NOT A FILTER'` | `400` — so the filter *is* parsed |
 | Attach 5 stores to one call | works, retrieval is exactly those 5 |
-| Attach 10 stores to one call | `400 Invalid input received` |
+| Attach **6** stores to one call | `400 Invalid input received` |
 
-So retrieval can be scoped to a *store*, but not to a subset of one, and a call
-cannot attach enough stores for store-per-paper to scale. **The per-profile
+So retrieval can be scoped to a *store*, but not to a subset of one, and **five
+stores per call** is the hard ceiling — far too few for store-per-paper to
+scale, and the reason a cross-library question reports what it could not
+search. **The per-profile
 store boundary is the isolation mechanism.** A shared index with a filter would
 have leaked one profile's library into another's answers.
 

@@ -14,7 +14,7 @@
 @tailwind utilities;
 
 :root {
-  /* Default theme (Ocean). ProfileWorkspace rewrites these at runtime. */
+  /* Accent. One palette now — the theme choice is light or dark, not hue. */
   --primary-50: 240 249 255;
   --primary-100: 224 242 254;
   --primary-200: 186 230 253;
@@ -25,6 +25,50 @@
   --primary-700: 3 105 161;
   --primary-800: 7 89 133;
   --primary-900: 12 74 110;
+
+  /* Light surfaces and text. */
+  --surface: 248 250 252;
+  --panel: 255 255 255;
+  --panel-2: 241 245 249;
+  --ink: 15 23 42;
+  --ink-muted: 100 116 139;
+  --ink-subtle: 148 163 184;
+  --line: 226 232 240;
+  --glass: 255 255 255;
+  --glass-alpha: 0.7;
+}
+
+.dark {
+  /* The accent lifts in dark: 600 on near-black is too low-contrast to read,
+     so each step shifts one lighter and the deep end is never used for text. */
+  --primary-50: 8 47 73;
+  --primary-100: 12 74 110;
+  --primary-200: 7 89 133;
+  --primary-300: 3 105 161;
+  --primary-400: 56 189 248;
+  --primary-500: 56 189 248;
+  --primary-600: 14 165 233;
+  --primary-700: 125 211 252;
+  --primary-800: 186 230 253;
+  --primary-900: 224 242 254;
+
+  --surface: 2 6 23;
+  --panel: 15 23 42;
+  --panel-2: 30 41 59;
+  --ink: 241 245 249;
+  --ink-muted: 148 163 184;
+  --ink-subtle: 100 116 139;
+  --line: 51 65 85;
+  --glass: 15 23 42;
+  --glass-alpha: 0.72;
+}
+
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+
+body {
+  background-color: rgb(var(--surface));
+  color: rgb(var(--ink));
 }
 
 ::-webkit-scrollbar {
@@ -43,10 +87,14 @@
 }
 
 .glass-panel {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgb(var(--glass) / var(--glass-alpha));
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
+
+/* The decorative blobs are tuned for a light page; dark needs them dimmer or
+   they read as smears rather than atmosphere. */
+.dark .animate-blob { opacity: 0.14 !important; }
 
 /* Referenced by the workspace background decor. */
 .animation-delay-2000 { animation-delay: 2s; }

@@ -16,6 +16,13 @@ import {
 import { PipelineMode, processPapers } from './ingest';
 import { buildProfileZip, pcmToWav } from './export';
 import {
+  CitationStyle,
+  STYLES,
+  formatBibliography,
+  formatCitation,
+  lookupCitationMeta,
+} from './citations';
+import {
   ask,
   extractText,
   fileSearchTool,
@@ -31,6 +38,12 @@ import {
 type Env = { Variables: { user: User } };
 
 const blobs = createBlobStore();
+
+/**
+ * File Search accepts at most five stores in one call — six returns
+ * `400 Invalid input received`. Measured, not documented.
+ */
+const MAX_ATTACHED_STORES = 5;
 
 /** Legacy inline artifacts carry no mime type, so recover it from the magic bytes. */
 const sniffImageMime = (data: Buffer): string => {
@@ -64,6 +77,54 @@ export const createRouter = () => {
 
   // --- Profiles -----------------------------------------------------------
   app.get('/profiles', async c => c.json(await repo.listProfiles(c.get('user').id)));
+
+  /**
+   * The landing page's search. Answers "do I already have this?" before any
+   * model call, so arriving with a scholar in mind lands in their library
+   * rather than building a second one.
+   */
+  app.get('/discover', async c => {
+    const q = (c.req.query('q') || '').trim();
+    if (!q) return c.json({ query: '', matches: [] });
+
+    const key = scholarKey(q);
+    const needle = q.toLowerCase();
+    const profiles = await repo.listProfiles(c.get('user').id);
+
+    const scored = await Promise.all(
+      profiles.map(async p => {
+        const keys = p.scholarKeys ?? [];
+        const exact = !!key && keys.includes(key);
+        const named =
+          (p.scholarName || '').toLowerCase().includes(needle) ||
+          (p.title || '').toLowerCase().includes(needle) ||
+          (p.topics || []).some(t => t.toLowerCase().includes(needle));
+        if (!exact && !named) return null;
+
+        const papers = await repo.listPapers(p.id);
+        return {
+          id: p.id,
+          title: p.title,
+          emoji: p.emoji,
+          scholarName: p.scholarName,
+          affiliation: p.affiliation,
+          topics: p.topics ?? [],
+          sourceCount: papers.length,
+          indexedCount: papers.filter(x => x.fileSearchDocName).length,
+          updatedAt: p.updatedAt,
+          // An exact identity match is offered as "this is it", a name
+          // substring only as "you might mean".
+          exact,
+        };
+      })
+    );
+
+    const matches = scored
+      .filter((m): m is NonNullable<typeof m> => !!m)
+      .sort((a, b) => Number(b.exact) - Number(a.exact) || b.updatedAt - a.updatedAt);
+
+    return c.json({ query: q, matches });
+  });
 
   app.post('/profiles', async c => {
     const body = await c.req.json().catch(() => ({}));
@@ -254,30 +315,62 @@ export const createRouter = () => {
       message?: string;
       useWebSearch?: boolean;
     };
-    if (!profileId || !message?.trim()) return c.json({ error: 'profileId and message are required' }, 400);
+    if (!message?.trim()) return c.json({ error: 'message is required' }, 400);
 
-    const profile = await owned(c, profileId);
-    if (!profile) return c.json({ error: 'Not found' }, 404);
+    // Without a profileId this is the landing page asking across every library.
+    const profile = profileId ? await owned(c, profileId) : null;
+    if (profileId && !profile) return c.json({ error: 'Not found' }, 404);
 
     // Papers only become searchable once they have been processed. Grounding an
     // empty store just produces "nothing covers this topic", so fall back to the
     // web and tell the client why.
-    const papers = await repo.listPapers(profileId);
-    const indexed = papers.filter(p => p.fileSearchDocName).length;
-    const emptyLibrary = indexed === 0;
+    let storeNames: string[] = [];
+    let indexed = 0;
+    let total = 0;
+    let searchedLibraries: string[] = [];
+    let skippedLibraries = 0;
 
-    const grounded = !useWebSearch && !!profile.fileSearchStoreName && !emptyLibrary;
-    const tools = grounded
-      ? [fileSearchTool([profile.fileSearchStoreName!])]
-      : [googleSearchTool()];
+    if (profile) {
+      const papers = await repo.listPapers(profile.id);
+      indexed = papers.filter(p => p.fileSearchDocName).length;
+      total = papers.length;
+      if (profile.fileSearchStoreName && indexed) storeNames = [profile.fileSearchStoreName];
+      searchedLibraries = indexed ? [profile.title] : [];
+    } else {
+      // A single call accepts at most five stores — six returns 400 (measured).
+      // Most recently touched libraries win, and the client is told what was
+      // left out rather than being quietly given a partial answer.
+      const all = await repo.listProfiles(c.get('user').id);
+      const withContent = (
+        await Promise.all(
+          all.map(async p => {
+            const papers = await repo.listPapers(p.id);
+            const count = papers.filter(x => x.fileSearchDocName).length;
+            return { profile: p, indexed: count, total: papers.length };
+          })
+        )
+      ).filter(x => x.indexed > 0 && x.profile.fileSearchStoreName);
 
-    const history = await repo.listMessages(profileId);
+      withContent.sort((a, b) => b.profile.updatedAt - a.profile.updatedAt);
+      const chosen = withContent.slice(0, MAX_ATTACHED_STORES);
+      storeNames = chosen.map(x => x.profile.fileSearchStoreName!);
+      searchedLibraries = chosen.map(x => x.profile.title);
+      skippedLibraries = withContent.length - chosen.length;
+      indexed = chosen.reduce((n, x) => n + x.indexed, 0);
+      total = withContent.reduce((n, x) => n + x.total, 0);
+    }
+
+    const grounded = !useWebSearch && storeNames.length > 0;
+    const tools = grounded ? [fileSearchTool(storeNames)] : [googleSearchTool()];
+
+    const history = profile ? await repo.listMessages(profile.id) : [];
     const transcript = history
       .slice(-10)
       .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
       .join('\n');
 
-    const input = `You are an expert research assistant helping with a library of papers.
+    const input = `You are an expert research assistant helping with a library of papers,
+articles, recordings and videos.
 ${grounded
   ? 'Answer using the indexed papers available through file search, and cite them.'
   : 'Answer using live web search.'}
@@ -337,7 +430,9 @@ User: ${message}`;
             // Distinguishes "you asked for the web" from "your library is empty".
             fellBack: !grounded && !useWebSearch,
             indexed,
-            pending: papers.length - indexed,
+            pending: total - indexed,
+            searchedLibraries,
+            skippedLibraries,
           }),
         });
       } catch (error: any) {
@@ -593,6 +688,79 @@ User: ${message}`;
           data: JSON.stringify({ message: error?.message ?? 'Processing failed' }),
         });
       }
+    });
+  });
+
+  // --- Citations -----------------------------------------------------------
+  // Formatted from stored metadata, enriched once from Crossref. Never from the
+  // model: an invented volume number reads as authoritative and gets pasted
+  // into somebody's bibliography.
+  const parseStyle = (raw: string | undefined): CitationStyle | null => {
+    const style = (raw || 'bibtex').toLowerCase() as CitationStyle;
+    return STYLES.includes(style) ? style : null;
+  };
+
+  /** Fills in DOI, journal, volume and pages the first time they are asked for. */
+  const enrich = async (profileId: string, papers: Paper[]): Promise<Paper[]> =>
+    Promise.all(
+      papers.map(async paper => {
+        if (paper.citationMeta || (paper.kind ?? 'paper') !== 'paper') return paper;
+        const citationMeta = await lookupCitationMeta(paper.title);
+        if (!citationMeta) return paper;
+        const updated = { ...paper, citationMeta };
+        await repo.upsertPaper(profileId, updated).catch(() => {});
+        return updated;
+      })
+    );
+
+  app.get('/profiles/:id/citations', async c => {
+    const profile = await owned(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+
+    const style = parseStyle(c.req.query('style'));
+    if (!style) {
+      return c.json({ error: `style must be one of: ${STYLES.join(', ')}` }, 400);
+    }
+
+    const papers = await enrich(profile.id, await repo.listPapers(profile.id));
+    const now = new Date();
+    const text = formatBibliography(papers, style, now);
+
+    if (c.req.query('download')) {
+      const extension = style === 'bibtex' ? 'bib' : style === 'ris' ? 'ris' : 'txt';
+      return c.body(text, 200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${profile.title.replace(/[^\w.-]+/g, '-')}.${extension}"`,
+      });
+    }
+
+    return c.json({
+      style,
+      count: papers.length,
+      text,
+      entries: papers.map(p => ({ id: p.id, title: p.title, citation: formatCitation(p, style, now) })),
+    });
+  });
+
+  app.get('/profiles/:id/papers/:paperId/citation', async c => {
+    const profile = await owned(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+
+    const style = parseStyle(c.req.query('style'));
+    if (!style) return c.json({ error: `style must be one of: ${STYLES.join(', ')}` }, 400);
+
+    const papers = await repo.listPapers(profile.id);
+    const paper = papers.find(p => p.id === c.req.param('paperId'));
+    if (!paper) return c.json({ error: 'Not found' }, 404);
+
+    const [enriched] = await enrich(profile.id, [paper]);
+    // Every style for one source: the picker switches without a round trip.
+    const now = new Date();
+    return c.json({
+      id: enriched.id,
+      title: enriched.title,
+      hasBibliographicData: !!enriched.citationMeta,
+      citations: Object.fromEntries(STYLES.map(s => [s, formatCitation(enriched, s, now)])),
     });
   });
 
