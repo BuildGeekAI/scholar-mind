@@ -22,3 +22,14 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Local data
+.data
+.firebase
+firebase-debug.log
+firestore-debug.log

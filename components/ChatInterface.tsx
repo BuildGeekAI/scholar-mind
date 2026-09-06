@@ -1,17 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '../types';
-import { Send, Bot, User, Sparkles, Search, X, PanelRightClose, Mic, MicOff } from 'lucide-react';
+import { Send, Bot, User, Sparkles, Search, X, PanelRightClose, Mic, MicOff, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface ChatInterfaceProps {
   messages: Message[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, useWebSearch?: boolean) => void;
+  /** How many papers are searchable. Zero means the library cannot ground anything yet. */
+  indexedCount?: number;
   isProcessing: boolean;
   readyToChat: boolean;
   onClose?: () => void;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isProcessing, readyToChat, onClose }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isProcessing, readyToChat, onClose, indexedCount = 0 }) => {
+  const [useWebSearch, setUseWebSearch] = useState(false);
   const [input, setInput] = useState('');
   const [isSearchVisible, setIsSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -31,7 +34,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isProcessing) return;
-    onSendMessage(input);
+    onSendMessage(input, useWebSearch);
     setInput('');
   };
 
@@ -185,6 +188,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
                 }`}
               >
                 <ReactMarkdown>{msg.content}</ReactMarkdown>
+
+                {/* Sources File Search actually retrieved for this answer. */}
+                {!!msg.citations?.length && (
+                  <details className="mt-3 pt-2 border-t border-slate-100">
+                    <summary className="text-xs font-medium text-slate-500 cursor-pointer hover:text-scholarly-600 select-none">
+                      {msg.citations.length} source{msg.citations.length === 1 ? '' : 's'} from your library
+                    </summary>
+                    <ul className="mt-2 space-y-2">
+                      {msg.citations.map((c, i) => (
+                        <li key={i} className="text-xs bg-slate-50 rounded-lg p-2 border border-slate-100">
+                          <div className="flex items-start gap-1.5 font-medium text-slate-700">
+                            <FileText className="w-3.5 h-3.5 shrink-0 mt-px text-scholarly-500" />
+                            <span className="line-clamp-2">{c.fileName}</span>
+                          </div>
+                          {c.snippet && (
+                            <p className="mt-1 text-slate-500 italic leading-snug line-clamp-3">“{c.snippet}”</p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </div>
 
               {msg.role === 'user' && (
@@ -200,6 +225,29 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
 
       {/* Input Area */}
       <div className="p-4 bg-white border-t border-slate-200 shrink-0">
+        <div className="flex items-center gap-2 mb-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setUseWebSearch(v => !v)}
+            title="File search and web search cannot be combined in one request, so each message uses one or the other."
+            className={`px-2.5 py-1 rounded-full font-medium transition-colors border ${
+              useWebSearch
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                : indexedCount > 0
+                  ? 'bg-scholarly-50 text-scholarly-700 border-scholarly-200'
+                  : 'bg-slate-100 text-slate-500 border-slate-200'
+            }`}
+          >
+            {useWebSearch
+              ? '🌐 Searching the web'
+              : indexedCount > 0
+                ? `📚 Using your library (${indexedCount})`
+                : '📚 Library is empty'}
+          </button>
+          <span className="text-slate-400">
+            {!useWebSearch && indexedCount === 0 ? 'press Generate to index papers' : 'tap to switch'}
+          </span>
+        </div>
         <form onSubmit={handleSubmit} className="flex items-center gap-2 relative">
           <input
             type="text"

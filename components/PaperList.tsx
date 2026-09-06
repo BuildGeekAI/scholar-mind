@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Paper } from '../types';
 import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Download, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2 } from 'lucide-react';
-import { playPcmAudio, stopAudio } from '../utils/audio';
+import { playAudioUrl, stopAudio } from '../utils/audio';
+import { blobUrl } from '../services/api';
 
 interface PaperListProps {
   papers: Paper[];
@@ -12,6 +13,21 @@ interface PaperListProps {
   onReadBlog: (paper: Paper) => void;
   onFetchCitations: (paper: Paper) => void;
 }
+
+/** Where each pipeline step sits on the card's progress bar. */
+const STAGES: Record<string, { label: string; percent: number }> = {
+  resolving: { label: 'Finding the paper', percent: 12 },
+  fetching:  { label: 'Downloading PDF',   percent: 30 },
+  indexing:  { label: 'Indexing full text', percent: 48 },
+  writing:   { label: 'Writing blog & slides', percent: 72 },
+  media:     { label: 'Generating audio & art', percent: 90 },
+};
+
+const stageOf = (paper: Paper) =>
+  STAGES[paper.stage ?? ''] ??
+  (paper.status === 'downloading'
+    ? STAGES.resolving
+    : { label: 'Working', percent: 60 });
 
 const PaperList: React.FC<PaperListProps> = ({ 
     papers, 
@@ -52,7 +68,7 @@ const PaperList: React.FC<PaperListProps> = ({
 
   const handlePlayAudio = async (e: React.MouseEvent, paper: Paper) => {
     e.stopPropagation();
-    if (!paper.audioBase64) return;
+    if (!paper.audioKey) return;
     
     // Toggle: Stop if currently playing this paper
     if (playingId === paper.id) {
@@ -63,7 +79,7 @@ const PaperList: React.FC<PaperListProps> = ({
 
     // Play new paper (implicitly stops others via utility)
     setPlayingId(paper.id);
-    await playPcmAudio(paper.audioBase64, () => {
+    await playAudioUrl(blobUrl(paper.audioKey)!, () => {
         setPlayingId(prev => prev === paper.id ? null : prev);
     });
   };
@@ -211,7 +227,7 @@ const PaperList: React.FC<PaperListProps> = ({
                  className={`h-full transition-all duration-1000 ease-in-out ${
                    paper.status === 'downloading' ? 'bg-scholarly-400' : 'bg-purple-500'
                  }`}
-                 style={{ width: paper.status === 'downloading' ? '30%' : '75%' }}
+                 style={{ width: `${stageOf(paper).percent}%` }}
                >
                  <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
                </div>
@@ -235,13 +251,14 @@ const PaperList: React.FC<PaperListProps> = ({
             </div>
 
             {/* Thumbnail Image or Placeholder */}
-            {paper.status === 'converted' && paper.illustration ? (
+            {paper.status === 'converted' && paper.illustrationKey ? (
               <div 
                 className="hidden sm:block w-32 h-24 shrink-0 rounded-xl bg-slate-100 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity border border-slate-100 shadow-inner group-hover:shadow-md"
                 onClick={() => onReadBlog(paper)}
               >
                 <img 
-                  src={`data:image/png;base64,${paper.illustration}`} 
+                  src={blobUrl(paper.illustrationKey)}
+                  loading="lazy" 
                   alt="Paper illustration" 
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                 />
@@ -364,7 +381,12 @@ const PaperList: React.FC<PaperListProps> = ({
                      <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span> Ready to Analyze
                    </span>
                 )}
-                {paper.status === 'downloading' && (
+                {isProcessing && (
+                  <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <Loader2 className="w-3 h-3 animate-spin" /> {stageOf(paper).label}
+                  </span>
+                )}
+                {false && paper.status === 'downloading' && (
                    <span className="text-xs flex items-center gap-1.5 text-scholarly-600 font-bold px-2 py-1 rounded-full bg-scholarly-50">
                      <Loader2 className="w-3 h-3 animate-spin" /> Fetching Metadata
                    </span>
@@ -390,7 +412,7 @@ const PaperList: React.FC<PaperListProps> = ({
                       <MonitorPlay className="w-3.5 h-3.5" /> Slides
                     </button>
 
-                    {paper.audioBase64 && (
+                    {paper.audioKey && (
                       <button 
                         onClick={(e) => handlePlayAudio(e, paper)}
                         className={`flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-xl transition-all border ${

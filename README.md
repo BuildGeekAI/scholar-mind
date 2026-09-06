@@ -1,119 +1,186 @@
-# 🎓 ScholarMind - AI Research Companion
+# 🎓 ScholarMind — AI Research Companion
 
-**ScholarMind** is a next-generation research assistant that transforms static academic papers into interactive, multimedia knowledge bases. Built with **React** and the **Google Gemini API**, it leverages retrieval-augmented generation (RAG) and multimodal capabilities to help students and researchers understand complex topics faster.
+ScholarMind turns academic papers into an interactive knowledge base. Point it at a scholar or a paper title, and it retrieves the open-access PDF, indexes the full text for semantic search, and generates a blog post, slides, a quiz, flashcards, narrated audio, and cover art — then answers questions grounded in what it actually read, with citations.
 
-![ScholarMind UI](https://via.placeholder.com/1200x600?text=ScholarMind+Dashboard)
-
-## ✨ Key Features
-
-### 🔍 Discovery & Library Management
-*   **Scholar Search:** Scrape and analyze scholar profiles using Google Search Grounding to auto-populate their top papers.
-*   **Manual Addition:** Add specific papers by title or topic to build a custom "Mixed Collection" library.
-*   **Persistent Library:** Your profile, papers, and chat history are automatically saved to Local Storage, so you never lose your research session.
-
-### 🧠 Deep Analysis Pipeline
-*   **Smart Summaries:** Automatically fetches abstracts and metadata using Google Search.
-*   **Citation Network:** Find and analyze papers that cite the current work to understand its impact.
-*   **Multimodal Generation:**
-    *   📝 **Blogs:** Converts dense academic text into engaging, markdown-formatted blog posts.
-    *   🎨 **Illustrations:** Generates abstract, data-viz style cover art for every paper using `gemini-2.5-flash-image`.
-    *   📊 **Slides:** Auto-generates key takeaways and slide decks.
-    *   🃏 **Flashcards:** Creates active recall study materials.
-    *   🧩 **Quizzes:** Generates multiple-choice questions with explanations.
-
-### 🎧 Audio & Conversational Learning
-*   **AI Podcast Intros:** Generates natural-sounding audio summaries using `gemini-2.5-flash-preview-tts`.
-*   **Interactive Host:** A conversational quiz mode where an AI host (with selectable voices like Kore, Puck, Zephyr) reads questions and provides audio feedback on your answers.
-
-### 💬 Context-Aware Chat Bot
-*   **Scholar Bot:** A persistent chat assistant on the right panel.
-*   **RAG (Retrieval Augmented Generation):** The bot has read access to the full generated content of your library. It answers questions specifically based on the papers you have analyzed.
-*   **Search Integration:** Can browse the live web to answer questions outside the scope of the loaded papers.
-
-### 🎨 Modern UI/UX
-*   **Glassmorphism:** Beautiful, translucent UI with mesh gradient backgrounds.
-*   **Dynamic Theming:** Switch instantly between 5 themes (Ocean, Violet, Emerald, Rose, Amber).
-*   **Responsive:** optimized for desktop and tablet research workflows.
+Built on Google Cloud: **Gemini** for generation and retrieval, **Firestore** for state, **Cloud Storage** for artifacts, **Cloud Run** for hosting. The same code runs locally.
 
 ---
 
-## 🛠️ Tech Stack
+## How it works
 
-*   **Frontend:** React 19, TypeScript, Vite
-*   **Styling:** Tailwind CSS (Custom Configuration)
-*   **AI SDK:** `@google/genai`
-*   **Icons:** Lucide React
-*   **State:** LocalStorage persistence
+```mermaid
+flowchart LR
+    U([You]) -->|"scholar name<br/>or paper title"| APP
 
----
+    subgraph APP["ScholarMind"]
+        direction TB
+        D["Discover<br/><i>google_search</i>"] --> I["Ingest<br/><i>url_context</i>"]
+        I --> X["Index<br/><i>file_search</i>"]
+        X --> G["Generate"]
+    end
 
-## 🤖 Gemini Models Used
+    G --> OUT["Blog · Slides · Quiz<br/>Flashcards · Audio · Art"]
+    X --> C["Chat with citations"]
 
-ScholarMind utilizes the latest experimental models from Google DeepMind:
+    style APP fill:#f0f9ff,stroke:#0284c7
+    style OUT fill:#ecfdf5,stroke:#059669
+    style C fill:#ecfdf5,stroke:#059669
+```
 
-| Task | Model | Description |
-| :--- | :--- | :--- |
-| **Search & Reasoning** | `gemini-3-flash-preview` | Used for finding scholars, scraping papers, RAG chat, and generating text resources. |
-| **Image Generation** | `gemini-2.5-flash-image` | Creates unique cover art for every research paper. |
-| **Text-to-Speech** | `gemini-2.5-flash-preview-tts` | Generates high-quality, low-latency audio for summaries and the quiz host. |
+Each paper travels through a pipeline whose every step can fail without stopping the rest:
 
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-1.  **Node.js** (v18 or higher)
-2.  **Google AI Studio API Key** (Get one [here](https://aistudio.google.com/))
-    *   *Note: Ensure you are in a region that supports the Gemini 3 and 2.5 experimental models.*
-
-### Installation
-
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/yourusername/scholarmind.git
-    cd scholarmind
-    ```
-
-2.  **Install dependencies:**
-    ```bash
-    npm install
-    ```
-
-3.  **Set up Environment Variables:**
-    Create a `.env` file in the root directory:
-    ```env
-    API_KEY=your_google_gemini_api_key_here
-    ```
-
-4.  **Run the development server:**
-    ```bash
-    npm start
-    ```
+```mermaid
+stateDiagram-v2
+    [*] --> discovered
+    discovered --> resolving: Generate
+    resolving --> fetching: open-access PDF found
+    resolving --> writing: no PDF — fall back to search
+    fetching --> indexing: PDF downloaded
+    fetching --> writing: blocked or paywalled
+    indexing --> writing: full text searchable
+    writing --> media: blog, slides, quiz, cards
+    media --> converted: audio + illustration
+    writing --> error
+    converted --> [*]
+```
 
 ---
 
-## 📖 Usage Guide
+## Architecture
 
-1.  **Search or Add:**
-    *   Toggle the input bar to **Search Scholar** to find an author (e.g., "Geoffrey Hinton").
-    *   Or toggle to **Add Paper** to analyze a specific topic (e.g., "Attention is All You Need").
+```mermaid
+flowchart TB
+    B["🌐 Browser<br/><b>no API key · no stored data</b>"]
 
-2.  **Select & Generate:**
-    *   Select the papers you are interested in using the checkboxes.
-    *   Click the **Generate** button. The app will asynchronously fetch deep details, write blogs, create slides, and generate audio/images.
+    subgraph SRV["Hono router — mounted by Vite in dev AND Cloud Run in prod"]
+        R["/api/*"]
+    end
 
-3.  **Read & Listen:**
-    *   Click **Read** on any processed paper to open the modal.
-    *   Switch tabs to view **Slides**, take a **Quiz**, or flip **Flashcards**.
-    *   Click **Listen** to hear the audio summary.
+    B -->|fetch| R
 
-4.  **Chat:**
-    *   Use the **Scholar Bot** on the right to ask specific questions like "Compare the methodologies of paper A and B".
-    *   Use `analyze [Paper Title]` in the chat to quickly add a new paper to your library via conversation.
+    R --> FS[("Firestore<br/><i>profiles · papers · messages</i>")]
+    R --> GCS[("Cloud Storage<br/><i>pdf · audio · images</i>")]
+    R --> SM[["Secret Manager<br/><i>GEMINI_API_KEY</i>"]]
+    R --> GEM
+
+    subgraph GEM["Gemini Developer API"]
+        direction LR
+        T1["google_search"]
+        T2["url_context"]
+        T3["file_search"]
+    end
+
+    style B fill:#fef3c7,stroke:#d97706
+    style SRV fill:#f0f9ff,stroke:#0284c7
+    style GEM fill:#f5f3ff,stroke:#7c3aed
+```
+
+The browser holds no credentials and no state. **One router implementation** serves development and production, so nothing works locally but breaks when deployed.
+
+→ [Architecture in depth](docs/architecture/README.md)
 
 ---
 
-## 📄 License
+## Models
 
-MIT License. Open source for educational and research purposes.
+| Purpose | Model |
+| :--- | :--- |
+| Search, reasoning, generation, chat | `gemini-3.8-flash` |
+| Cover illustrations | `gemini-3.1-flash-image` |
+| Speech | `gemini-3.1-flash-tts-preview` |
+| Retrieval embeddings | `gemini-embedding-2` |
+
+Text uses the **Interactions API**; speech and images stay on `generateContent`.
+
+---
+
+## Quick start
+
+**Needs** Node 22+, a [Gemini API key](https://aistudio.google.com/apikey), and Java 11+ for the Firestore emulator.
+
+```bash
+npm install
+cp .env.example .env      # add GEMINI_API_KEY
+```
+
+```mermaid
+flowchart LR
+    A["npm run emulator<br/><i>terminal 1</i>"] --> B[("Firestore<br/>:8085")]
+    C["npm run dev:local<br/><i>terminal 2</i>"] --> D["App + API<br/>:3000"]
+    D --> B
+    D --> E["./.data/blobs"]
+    D -.->|"always the real API"| F["Gemini"]
+
+    style F fill:#f5f3ff,stroke:#7c3aed
+```
+
+Verify with `curl localhost:3000/api/healthz`:
+
+```json
+{"ok": true, "geminiKey": "configured", "firestore": "emulator", "blobs": "filesystem"}
+```
+
+> **No File Search emulator exists.** Retrieval always calls the real API, even locally. `FILE_SEARCH_STORE_PREFIX=dev-` keeps local stores identifiable.
+
+→ [Development guide](docs/development/README.md)
+
+---
+
+## Deploy
+
+```bash
+gcloud builds submit --config cloudbuild.yaml
+```
+
+Deploys private (`--no-allow-unauthenticated`), expecting IAP in front.
+
+→ [Deployment guide](docs/deployment/README.md)
+
+---
+
+## Two constraints worth knowing
+
+Both were found by testing the live API, and both shape the design.
+
+**Grounding tools are mutually exclusive.** File Search combines with neither Google Search nor URL Context — the API rejects it outright. So work is staged, and chat exposes a visible toggle rather than guessing.
+
+**File Search corrupts structured JSON.** Its citation-insertion pass rewrites the `[` that opens a JSON array, so grounded structured generation reliably produces broken JSON. Generation therefore runs in two calls: grounded prose, then structuring with no tools.
+
+→ [The full reasoning](docs/architecture/README.md#grounding-two-hard-constraints)
+
+---
+
+## Scripts
+
+| Command | Purpose |
+| :--- | :--- |
+| `npm run dev:local` | App + API against the emulator |
+| `npm run emulator` | Firestore emulator |
+| `npm run build` | Production client build |
+| `npm start` | Production server |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run docker:build` | Container image |
+
+## Layout
+
+```
+server/       router · repository · blobStore · gemini · ingest · export
+components/   React UI
+services/     api.ts — the browser's only server interface
+docs/         architecture · development · deployment · features · sdlc
+scripts/      live API verification spikes
+```
+
+## Docs
+
+| | |
+| :--- | :--- |
+| [Architecture](docs/architecture/README.md) | Design and the reasoning behind it |
+| [Development](docs/development/README.md) | Local setup, conventions, debugging |
+| [Deployment](docs/deployment/README.md) | GCP provisioning end to end |
+| [Features](docs/general/features.md) | User guide |
+| [SDLC](docs/sdlc/README.md) | How this project is planned and built |
+
+## License
+
+MIT. Open source for educational and research purposes.

@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3 } from 'lucide-react';
-import { Paper, Message, ScholarData, AppState, Profile } from '../types';
-import { searchScholarAndPapers, generatePaperResources, generateAudio, generateIllustration, streamChatResponse, findCitingPapers, findSinglePaper } from '../services/geminiService';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2 } from 'lucide-react';
+import { Citation, Paper, Message, ScholarData, AppState } from '../types';
+import * as api from '../services/api';
 import PaperList from './PaperList';
 import BlogReader from './BlogReader';
 import ChatInterface from './ChatInterface';
@@ -38,51 +38,91 @@ const THEMES = {
 type ThemeName = keyof typeof THEMES;
 
 interface ProfileWorkspaceProps {
-  profile: Profile;
-  onSave: (updatedProfile: Profile) => void;
+  profileId: string;
   onBack: () => void;
   onDelete: () => void;
 }
 
-const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profile, onSave, onBack, onDelete }) => {
-  // Initialize state from props
-  const [scholar, setScholar] = useState<ScholarData | null>(profile.scholar);
-  const [chatMessages, setChatMessages] = useState<Message[]>(profile.chatMessages);
-  const [currentTheme, setCurrentTheme] = useState<ThemeName>((profile.theme as ThemeName) || 'Ocean');
-  const [title, setTitle] = useState(profile.title);
+const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, onDelete }) => {
+  // Server-owned state
+  const [profile, setProfile] = useState<api.ProfileRecord | null>(null);
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [chatMessages, setChatMessages] = useState<Message[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [currentTheme, setCurrentTheme] = useState<ThemeName>('Ocean');
+  const [title, setTitle] = useState('');
 
   const [scholarName, setScholarName] = useState('');
   const [manualPaperTitle, setManualPaperTitle] = useState('');
-  const [appState, setAppState] = useState<AppState>(profile.scholar ? AppState.READY : AppState.IDLE);
+  const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [activePaper, setActivePaper] = useState<Paper | null>(null);
   const [isChatProcessing, setIsChatProcessing] = useState(false);
   const [showThemePicker, setShowThemePicker] = useState(false);
-  
+
   // UI States
   const [inputMode, setInputMode] = useState<'search' | 'add'>('search');
   const [isChatOpen, setIsChatOpen] = useState(true);
-  
+
   // Selection State
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(new Set());
 
-  // Propagate changes to parent (Auto-save)
-  useEffect(() => {
-    onSave({
-      ...profile,
-      scholar,
-      chatMessages,
-      theme: currentTheme,
-      updatedAt: Date.now(),
-      title: title
-    });
-  }, [scholar, chatMessages, currentTheme, title]);
+  // Ids in the current generation batch, so overall progress can be reported.
+  const [batchIds, setBatchIds] = useState<string[]>([]);
 
-  // Auto-update title when a new scholar is found, but only if it matches a default pattern or was empty
+  // Load everything for this profile from the server.
   useEffect(() => {
-    if (scholar?.name && (title === 'Untitled profile' || title === 'Untitled notebook' || !title)) {
-       setTitle(scholar.name);
-    }
-  }, [scholar?.name]);
+    let cancelled = false;
+    api.getProfile(profileId)
+      .then(({ profile: p, papers: ps, messages }) => {
+        if (cancelled) return;
+        setProfile(p);
+        setPapers(ps);
+        setChatMessages(messages);
+        setTitle(p.title);
+        setCurrentTheme((p.theme as ThemeName) || 'Ocean');
+        setAppState(ps.length ? AppState.READY : AppState.IDLE);
+      })
+      .catch(e => !cancelled && setLoadError(e.message));
+    return () => { cancelled = true; };
+  }, [profileId]);
+
+  // The JSX reads a scholar-shaped object; derive it rather than storing it twice.
+  const scholar: ScholarData | null = useMemo(() => {
+    if (!profile) return null;
+    if (!papers.length && !profile.scholarName) return null;
+    return {
+      name: profile.scholarName || 'My Library',
+      affiliation: profile.affiliation || 'Custom Collection',
+      topics: profile.topics || ['Mixed'],
+      papers,
+    };
+  }, [profile, papers]);
+
+  // Persist title and theme edits, debounced so typing does not spam the API.
+  const savedRef = useRef({ title: '', theme: '' });
+  useEffect(() => {
+    if (!profile) return;
+    if (savedRef.current.title === title && savedRef.current.theme === currentTheme) return;
+    const handle = setTimeout(() => {
+      savedRef.current = { title, theme: currentTheme };
+      api.updateProfile(profile.id, { title, theme: currentTheme }).catch(console.error);
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [title, currentTheme, profile]);
+
+  // The server names an untitled profile after the scholar it resolved, so adopt
+  // that. Guarded against a raw URL ever becoming the title.
+  const looksLikeUrl = (value: string) => /^(https?:|www\.)|scholar\.google/i.test(value.trim());
+
+  useEffect(() => {
+    if (!profile) return;
+    const candidate = profile.title && profile.title !== 'Untitled profile'
+      ? profile.title
+      : profile.scholarName;
+    if (!candidate || looksLikeUrl(candidate)) return;
+    if (!title || title === 'Untitled profile') setTitle(candidate);
+  }, [profile?.title, profile?.scholarName]);
 
   // Apply Theme
   useEffect(() => {
@@ -95,20 +135,40 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profile, onSave, on
     }
   }, [currentTheme]);
 
-  // Derived state to check if any background processing is happening
-  const isAnyProcessing = useMemo(() => {
-    return scholar?.papers.some(p => p.status === 'downloading' || p.status === 'processing') || false;
-  }, [scholar?.papers]);
+  const isAnyProcessing = useMemo(
+    () => papers.some(p => p.status === 'downloading' || p.status === 'processing'),
+    [papers]
+  );
 
-  // Clear all data (local to this profile)
-  const handleClearSession = () => {
-    if (window.confirm("Are you sure you want to clear all papers and chat history from this profile?")) {
-      setScholar(null);
-      setChatMessages([]);
-      setAppState(AppState.IDLE);
-      setSelectedPaperIds(new Set());
-      setScholarName('');
-    }
+  const batchProgress = useMemo(() => {
+    if (!batchIds.length) return null;
+    const inBatch = papers.filter(p => batchIds.includes(p.id));
+    const settled = inBatch.filter(p => p.status === 'converted' || p.status === 'error').length;
+    return { done: settled, total: batchIds.length, percent: (settled / batchIds.length) * 100 };
+  }, [papers, batchIds]);
+
+  const mergePaper = useCallback((incoming: Paper) => {
+    setPapers(prev => {
+      const index = prev.findIndex(p => p.id === incoming.id);
+      if (index === -1) return [incoming, ...prev];
+      const next = [...prev];
+      next[index] = incoming;
+      return next;
+    });
+  }, []);
+
+  const handleClearSession = async () => {
+    if (!profile) return;
+    if (!window.confirm("Are you sure you want to clear all papers and chat history from this profile?")) return;
+    await Promise.all([
+      api.clearMessages(profile.id),
+      ...papers.map(paper => api.deletePaper(profile.id, paper.id)),
+    ]);
+    setPapers([]);
+    setChatMessages([]);
+    setAppState(AppState.IDLE);
+    setSelectedPaperIds(new Set());
+    setScholarName('');
   };
 
   const handleDeleteProfile = () => {
@@ -117,135 +177,60 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profile, onSave, on
      }
   };
 
-  // Search for scholar
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!scholarName.trim()) return;
+    if (!scholarName.trim() || !profile) return;
 
     setAppState(AppState.SEARCHING);
-    // Note: We deliberately replace the scholar data here for a new search
-    setScholar(null);
-    setChatMessages([]);
     setSelectedPaperIds(new Set());
 
     try {
-      const data = await searchScholarAndPapers(scholarName);
-      setScholar({
-        name: scholarName,
-        affiliation: data.affiliation,
-        topics: data.topics,
-        papers: data.papers
-      });
-      
-      setSelectedPaperIds(new Set(data.papers.map(p => p.id)));
+      const { profile: updated, papers: found } = await api.searchScholar(profile.id, scholarName);
+      setProfile(updated);
+      if (updated.title && !looksLikeUrl(updated.title)) {
+        setTitle(updated.title);
+        savedRef.current = { title: updated.title, theme: currentTheme };
+      }
+      setPapers(found);
+      setSelectedPaperIds(new Set(found.map(p => p.id)));
       setAppState(AppState.READY);
     } catch (error: any) {
       console.error(error);
       setAppState(AppState.IDLE);
-      let msg = "Failed to find scholar info. Please try again.";
-      if (error.message && (error.message.includes('429') || error.message.includes('quota') || error.message.includes('RESOURCE_EXHAUSTED'))) {
-          msg = "API Quota Exceeded. Please try again in a few minutes.";
-      }
-      alert(msg);
+      alert(error.message || 'Failed to find scholar info. Please try again.');
     }
   };
 
-  // Manual Add Paper
   const handleManualAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualPaperTitle.trim()) return;
+    if (!manualPaperTitle.trim() || !profile) return;
 
-    setAppState(AppState.SEARCHING); // Use SEARCHING state for loading spinner
-    
+    setAppState(AppState.SEARCHING);
     try {
-      const newPaper = await findSinglePaper(manualPaperTitle);
-      
-      if (newPaper) {
-         setScholar(prev => {
-             const currentPapers = prev?.papers || [];
-             // Check duplicates
-             if (currentPapers.some(p => p.title.toLowerCase() === newPaper.title.toLowerCase())) {
-                 alert(`"${newPaper.title}" is already in your list.`);
-                 return prev;
-             }
-             
-             const newScholar = {
-                 name: prev?.name || "My Library",
-                 affiliation: prev?.affiliation || "Custom Collection",
-                 topics: prev?.topics || ["Mixed"],
-                 papers: [newPaper, ...currentPapers]
-             };
-             
-             // Auto select the new paper
-             setSelectedPaperIds(prevSet => new Set(prevSet).add(newPaper.id));
-             return newScholar;
-         });
-         setManualPaperTitle('');
-      } else {
-         alert("Could not find a paper with that title. Please try being more specific.");
-      }
+      const newPaper = await api.findPaper(profile.id, manualPaperTitle);
+      mergePaper(newPaper);
+      setSelectedPaperIds(prev => new Set(prev).add(newPaper.id));
+      setManualPaperTitle('');
+    } catch (error: any) {
+      alert(error.message || 'Failed to add paper.');
+    } finally {
       setAppState(AppState.READY);
-    } catch (error) {
-      console.error(error);
-      setAppState(scholar ? AppState.READY : AppState.IDLE);
-      alert("Failed to add paper.");
     }
   };
 
-  // Pipeline: Simulate Download -> Generate Blog/Slides/Quiz/Flashcards -> Generate Audio -> Generate Illustration
-  const processPapers = async (papers: Paper[]) => {
-    const CONCURRENCY_LIMIT = 2;
-    const queue = [...papers];
-
-    const worker = async () => {
-      while (queue.length > 0) {
-        const p = queue.shift();
-        if (!p) break;
-        
-        // Skip if already processing
-        if (p.status === 'downloading' || p.status === 'processing') continue;
-
-        try {
-          updatePaperStatus(p.id, 'downloading');
-          await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1000)); 
-
-          updatePaperStatus(p.id, 'processing');
-          
-          const resources = await generatePaperResources(p);
-          
-          updatePaperStatus(p.id, 'processing', {
-            blogContent: resources.blogContent,
-            blogTitle: resources.blogTitle,
-            slides: resources.slides,
-            quiz: resources.quiz,
-            flashCards: resources.flashCards,
-            audioScript: resources.audioScript
-          });
-
-          const audioPromise = resources.audioScript ? generateAudio(resources.audioScript) : Promise.resolve(undefined);
-          const illustrationPromise = generateIllustration(p.title, p.summary);
-
-          const [audioBase64, illustration] = await Promise.all([audioPromise, illustrationPromise]);
-
-          updatePaperStatus(p.id, 'converted', {
-            audioBase64,
-            illustration,
-            blogContent: resources.blogContent, 
-            blogTitle: resources.blogTitle,
-            slides: resources.slides,
-            quiz: resources.quiz,
-            flashCards: resources.flashCards
-          });
-        } catch (error) {
-          console.error(`Error processing paper ${p.title}:`, error);
-          updatePaperStatus(p.id, 'error');
-        }
-      }
-    };
-
-    const workers = Array(Math.min(papers.length, CONCURRENCY_LIMIT)).fill(null).map(() => worker());
-    Promise.all(workers);
-  };
+  /** The server owns the pipeline; this only streams progress back into state. */
+  const runPipeline = useCallback(async (ids: string[]) => {
+    if (!profile || !ids.length) return;
+    setBatchIds(ids);
+    try {
+      await api.processPapers(profile.id, ids, mergePaper, undefined, message => alert(message));
+    } catch (error: any) {
+      console.error(error);
+      alert(error.message || 'Processing failed.');
+    } finally {
+      setBatchIds([]);
+    }
+  }, [profile, mergePaper]);
 
   const handleToggleSelect = (id: string) => {
     setSelectedPaperIds(prev => {
@@ -257,54 +242,39 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profile, onSave, on
   };
 
   const handleSelectAll = () => {
-    if (!scholar) return;
-    const allIds = scholar.papers.map(p => p.id);
-    if (selectedPaperIds.size === allIds.length) {
-      setSelectedPaperIds(new Set());
-    } else {
-      setSelectedPaperIds(new Set(allIds));
-    }
+    const allIds = papers.map(p => p.id);
+    if (selectedPaperIds.size === allIds.length) setSelectedPaperIds(new Set());
+    else setSelectedPaperIds(new Set(allIds));
   };
 
   const handleGenerateSelected = () => {
-    if (!scholar) return;
-    const papersToProcess = scholar.papers.filter(p => selectedPaperIds.has(p.id));
-    if (papersToProcess.length === 0) return;
-    
-    processPapers(papersToProcess);
-  };
-
-  const updatePaperStatus = (id: string, status: Paper['status'], extra?: Partial<Paper>) => {
-    setScholar(prev => {
-      if (!prev) return null;
-      return {
-        ...prev,
-        papers: prev.papers.map(p => 
-          p.id === id ? { ...p, status, ...extra } : p
-        )
-      };
-    });
+    runPipeline(papers.filter(p => selectedPaperIds.has(p.id)).map(p => p.id));
   };
 
   const handleFetchCitations = async (paper: Paper) => {
+    if (!profile) return;
     if (paper.citingPapers && paper.citingPapers.length > 0) return;
-    
     try {
-      const citations = await findCitingPapers(paper.title, paper.authors);
-      updatePaperStatus(paper.id, paper.status, { citingPapers: citations });
+      const citingPapers = await api.fetchCitations(profile.id, paper.id);
+      mergePaper({ ...paper, citingPapers });
     } catch (e) {
       console.error("Failed to fetch citations", e);
     }
   };
 
   const updateBotMessage = (id: string, content: string, isStreaming: boolean = false) => {
-    setChatMessages(prev => prev.map(msg => 
+    setChatMessages(prev => prev.map(msg =>
       msg.id === id ? { ...msg, content, isStreaming } : msg
     ));
   };
 
-  // Chat Logic
-  const handleSendMessage = useCallback(async (text: string) => {
+  const attachCitations = (id: string, citations: Citation[]) => {
+    setChatMessages(prev => prev.map(msg => (msg.id === id ? { ...msg, citations } : msg)));
+  };
+
+  const handleSendMessage = useCallback(async (text: string, useWebSearch = false) => {
+    if (!profile) return;
+
     const newUserMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -314,6 +284,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profile, onSave, on
 
     setChatMessages(prev => [...prev, newUserMsg]);
     setIsChatProcessing(true);
+    api.appendMessage(profile.id, newUserMsg).catch(console.error);
 
     const botMsgId = (Date.now() + 1).toString();
     setChatMessages(prev => [...prev, {
@@ -325,69 +296,76 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profile, onSave, on
     }]);
 
     const analyzeMatch = text.match(/^analyze\s+(.+)/i);
-
     if (analyzeMatch) {
-        const query = analyzeMatch[1];
-        try {
-            updateBotMessage(botMsgId, `Searching for paper: "${query}"...`, true);
-            const newPaper = await findSinglePaper(query);
-            
-            if (newPaper) {
-                updateBotMessage(botMsgId, `Found "${newPaper.title}". Generating resources...`, true);
-                let added = false;
-                setScholar(prev => {
-                    const newScholar = prev || { name: 'Custom Search', papers: [] };
-                    if (newScholar.papers.some(p => p.title.toLowerCase() === newPaper.title.toLowerCase())) {
-                         return newScholar; 
-                    }
-                    added = true;
-                    return {
-                        ...newScholar,
-                        papers: [newPaper, ...newScholar.papers]
-                    };
-                });
-                
-                if (added) {
-                  await processPapers([newPaper]);
-                  updateBotMessage(botMsgId, `Successfully analyzed "${newPaper.title}". You can now read the blog or ask questions about it.`, false);
-                } else {
-                   updateBotMessage(botMsgId, `Paper "${newPaper.title}" is already in your list.`, false);
-                }
-            } else {
-                 updateBotMessage(botMsgId, `Could not find a paper matching "${query}".`, false);
-            }
-        } catch (e) {
-             console.error(e);
-             updateBotMessage(botMsgId, `Error processing request.`, false);
-        } finally {
-             setIsChatProcessing(false);
-        }
-        return;
-    }
-
-    if (!scholar) {
-         updateBotMessage(botMsgId, "Please add some papers to your library first so I can assist you.", false);
-         setIsChatProcessing(false);
-         return;
+      const query = analyzeMatch[1];
+      try {
+        updateBotMessage(botMsgId, `Searching for paper: "${query}"...`, true);
+        const newPaper = await api.findPaper(profile.id, query);
+        mergePaper(newPaper);
+        updateBotMessage(botMsgId, `Found "${newPaper.title}". Generating resources...`, true);
+        await runPipeline([newPaper.id]);
+        updateBotMessage(botMsgId, `Successfully analyzed "${newPaper.title}". You can now read the blog or ask questions about it.`, false);
+      } catch (e: any) {
+        updateBotMessage(botMsgId, e.message || 'Error processing request.', false);
+      } finally {
+        setIsChatProcessing(false);
+      }
+      return;
     }
 
     let fullResponse = "";
-
-    await streamChatResponse(
-      [...chatMessages, newUserMsg],
-      scholar.papers,
-      text,
-      (chunk) => {
-        fullResponse += chunk;
-        updateBotMessage(botMsgId, fullResponse, true);
-      }
-    );
+    let citations: Citation[] = [];
+    try {
+      await api.streamChat(
+        profile.id,
+        text,
+        useWebSearch,
+        chunk => {
+          fullResponse += chunk;
+          updateBotMessage(botMsgId, fullResponse, true);
+        },
+        info => {
+          // Say plainly that nothing is indexed yet, rather than letting the
+          // model report an empty library as if the question were unanswerable.
+          if (info?.fellBack && info.pending) {
+            fullResponse +=
+              `\n\n---\n*Answered from the web: none of your ${info.pending} papers are indexed yet. ` +
+              `Select them and press **Generate** to make them searchable.*`;
+          }
+        },
+        message => { fullResponse = fullResponse || `[${message}]`; },
+        received => { citations = received; attachCitations(botMsgId, received); }
+      );
+    } catch (e: any) {
+      fullResponse = fullResponse || `[${e.message || 'Chat failed'}]`;
+    }
 
     updateBotMessage(botMsgId, fullResponse, false);
     setIsChatProcessing(false);
+    api.appendMessage(profile.id, {
+      id: botMsgId, role: 'model', content: fullResponse, timestamp: Date.now(), citations,
+    }).catch(console.error);
+  }, [profile, mergePaper, runPipeline]);
 
-  }, [chatMessages, scholar]);
+  if (loadError) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center gap-4 bg-slate-50 text-center px-6">
+        <p className="text-slate-800 font-semibold">Could not load this profile.</p>
+        <p className="text-slate-500 text-sm max-w-md">{loadError}</p>
+        <button onClick={onBack} className="px-4 py-2 rounded-lg bg-scholarly-600 text-white text-sm font-medium">
+          Back to Dashboard
+        </button>
+      </div>
+    );
+  }
 
+  if (!profile) {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-slate-50">
+        <Loader2 className="w-6 h-6 text-scholarly-600 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col md:flex-row h-screen w-full bg-slate-50 overflow-hidden font-sans transition-colors duration-500 relative">
@@ -583,14 +561,55 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profile, onSave, on
           />
         </div>
 
-        {/* Floating status (Processing) */}
+        {/* Floating status: real batch progress while the pipeline runs */}
         {isAnyProcessing && (
-           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-900/80 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 text-sm backdrop-blur-md z-30 animate-in fade-in slide-in-from-bottom-8 border border-white/10">
-             <div className="relative flex items-center justify-center">
-                <span className="absolute w-full h-full bg-scholarly-500 rounded-full animate-ping opacity-50"></span>
-                <Activity className="relative w-4 h-4 text-scholarly-400" />
+           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[min(92vw,26rem)] bg-slate-900/85 text-white px-5 py-4 rounded-2xl shadow-2xl backdrop-blur-md z-30 animate-in fade-in slide-in-from-bottom-8 border border-white/10">
+             <div className="flex items-center gap-3">
+                <div className="relative flex items-center justify-center shrink-0">
+                   <span className="absolute w-full h-full bg-scholarly-500 rounded-full animate-ping opacity-50"></span>
+                   <Activity className="relative w-4 h-4 text-scholarly-400" />
+                </div>
+                <span className="font-medium tracking-wide text-sm flex-1 min-w-0">
+                  {batchProgress
+                    ? `Processing ${batchProgress.done} of ${batchProgress.total} papers`
+                    : 'Generating assets…'}
+                </span>
+                {batchProgress && (
+                  <span className="text-xs font-mono text-scholarly-300 tabular-nums shrink-0">
+                    {Math.round(batchProgress.percent)}%
+                  </span>
+                )}
              </div>
-             <span className="font-medium tracking-wide">Generating Assets (Async)...</span>
+
+             {batchProgress && (
+               <div className="mt-3 h-1.5 w-full bg-white/15 rounded-full overflow-hidden">
+                 <div
+                   className="h-full bg-gradient-to-r from-scholarly-400 to-scholarly-200 rounded-full transition-all duration-500 ease-out"
+                   style={{ width: `${Math.max(batchProgress.percent, 3)}%` }}
+                 />
+               </div>
+             )}
+
+             {/* What each in-flight paper is doing right now. */}
+             <div className="mt-3 space-y-1.5 max-h-24 overflow-y-auto">
+               {papers
+                 .filter(p => p.status === 'downloading' || p.status === 'processing')
+                 .slice(0, 3)
+                 .map(p => (
+                   <div key={p.id} className="flex items-center gap-2 text-xs text-white/70">
+                     <Loader2 className="w-3 h-3 animate-spin shrink-0 text-scholarly-300" />
+                     <span className="truncate flex-1">{p.title}</span>
+                     <span className="text-white/50 shrink-0">
+                       {p.stage === 'resolving' ? 'finding'
+                         : p.stage === 'fetching' ? 'downloading'
+                         : p.stage === 'indexing' ? 'indexing'
+                         : p.stage === 'writing' ? 'writing'
+                         : p.stage === 'media' ? 'audio & art'
+                         : 'working'}
+                     </span>
+                   </div>
+                 ))}
+             </div>
            </div>
         )}
       </div>
@@ -605,6 +624,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profile, onSave, on
             <ChatInterface 
                 messages={chatMessages} 
                 onSendMessage={handleSendMessage}
+                indexedCount={papers.filter(p => p.fileSearchDocName).length}
                 isProcessing={isChatProcessing}
                 readyToChat={true}
                 onClose={() => setIsChatOpen(false)}

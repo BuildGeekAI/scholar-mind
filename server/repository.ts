@@ -1,0 +1,143 @@
+import { Firestore } from '@google-cloud/firestore';
+import { Message, Paper } from '../types';
+
+export interface ProfileRecord {
+  id: string;
+  ownerId: string;
+  title: string;
+  emoji: string;
+  theme: string;
+  createdAt: number;
+  updatedAt: number;
+  scholarName?: string;
+  affiliation?: string;
+  topics?: string[];
+  /** Set once the profile's File Search store exists (Phase 2). */
+  fileSearchStoreName?: string;
+}
+
+// Constructed lazily so that merely importing the router (as vite.config does)
+// never reaches for credentials. Firestore rejects undefined values, and Paper
+// is mostly optional fields, hence ignoreUndefinedProperties.
+let _db: Firestore | undefined;
+const db = (): Firestore => {
+  if (!_db) {
+    _db = new Firestore({
+      ignoreUndefinedProperties: true,
+      projectId:
+        process.env.GOOGLE_CLOUD_PROJECT ||
+        (process.env.FIRESTORE_EMULATOR_HOST ? 'scholarmind-local' : undefined),
+    });
+  }
+  return _db;
+};
+
+const profiles = () => db().collection('profiles');
+const papersOf = (profileId: string) => profiles().doc(profileId).collection('papers');
+const messagesOf = (profileId: string) => profiles().doc(profileId).collection('messages');
+
+/** Deletes a subcollection in batches; Firestore has no recursive delete server-side. */
+const deleteCollection = async (
+  ref: FirebaseFirestore.CollectionReference,
+  batchSize = 300
+): Promise<void> => {
+  while (true) {
+    const snapshot = await ref.limit(batchSize).get();
+    if (snapshot.empty) return;
+    const batch = db().batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    if (snapshot.size < batchSize) return;
+  }
+};
+
+export const listProfiles = async (ownerId: string): Promise<ProfileRecord[]> => {
+  const snapshot = await profiles().where('ownerId', '==', ownerId).get();
+  return snapshot.docs
+    .map(d => d.data() as ProfileRecord)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+};
+
+export const getProfile = async (ownerId: string, id: string): Promise<ProfileRecord | null> => {
+  const doc = await profiles().doc(id).get();
+  if (!doc.exists) return null;
+  const record = doc.data() as ProfileRecord;
+  return record.ownerId === ownerId ? record : null;
+};
+
+export const createProfile = async (
+  ownerId: string,
+  partial: Partial<ProfileRecord> & { id: string }
+): Promise<ProfileRecord> => {
+  const now = Date.now();
+  const record: ProfileRecord = {
+    id: partial.id,
+    ownerId,
+    title: partial.title ?? 'Untitled profile',
+    emoji: partial.emoji ?? '📒',
+    theme: partial.theme ?? 'Ocean',
+    createdAt: partial.createdAt ?? now,
+    updatedAt: now,
+    scholarName: partial.scholarName,
+    affiliation: partial.affiliation,
+    topics: partial.topics,
+  };
+  await profiles().doc(record.id).set(record);
+  return record;
+};
+
+export const updateProfile = async (
+  ownerId: string,
+  id: string,
+  patch: Partial<ProfileRecord>
+): Promise<ProfileRecord | null> => {
+  const existing = await getProfile(ownerId, id);
+  if (!existing) return null;
+  const { id: _ignoredId, ownerId: _ignoredOwner, ...safe } = patch;
+  const updated = { ...existing, ...safe, updatedAt: Date.now() };
+  await profiles().doc(id).set(updated);
+  return updated;
+};
+
+export const deleteProfile = async (ownerId: string, id: string): Promise<boolean> => {
+  const existing = await getProfile(ownerId, id);
+  if (!existing) return false;
+  await deleteCollection(papersOf(id));
+  await deleteCollection(messagesOf(id));
+  await profiles().doc(id).delete();
+  return true;
+};
+
+export const listPapers = async (profileId: string): Promise<Paper[]> => {
+  const snapshot = await papersOf(profileId).get();
+  return snapshot.docs.map(d => d.data() as Paper);
+};
+
+/** One paper per document — the whole point of the subcollection split. */
+export const upsertPaper = async (profileId: string, paper: Paper): Promise<void> => {
+  await papersOf(profileId).doc(paper.id).set(paper, { merge: true });
+};
+
+export const upsertPapers = async (profileId: string, papers: Paper[]): Promise<void> => {
+  if (!papers.length) return;
+  const batch = db().batch();
+  papers.forEach(p => batch.set(papersOf(profileId).doc(p.id), p, { merge: true }));
+  await batch.commit();
+};
+
+export const deletePaper = async (profileId: string, paperId: string): Promise<void> => {
+  await papersOf(profileId).doc(paperId).delete();
+};
+
+export const listMessages = async (profileId: string): Promise<Message[]> => {
+  const snapshot = await messagesOf(profileId).orderBy('timestamp').get();
+  return snapshot.docs.map(d => d.data() as Message);
+};
+
+export const appendMessage = async (profileId: string, message: Message): Promise<void> => {
+  await messagesOf(profileId).doc(message.id).set(message);
+};
+
+export const clearMessages = async (profileId: string): Promise<void> => {
+  await deleteCollection(messagesOf(profileId));
+};
