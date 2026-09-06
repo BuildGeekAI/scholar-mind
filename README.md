@@ -14,9 +14,9 @@ flowchart LR
 
     subgraph APP["ScholarMind"]
         direction TB
-        D["Discover<br/><i>google_search</i>"] --> I["Ingest<br/><i>url_context</i>"]
-        I --> X["Index<br/><i>file_search</i>"]
-        X --> G["Generate"]
+        D["Discover<br/><i>google_search</i>"] --> P["Your papers"]
+        P -->|"Index"| X["Retrieve & embed<br/><i>file_search</i>"]
+        P -->|"Generate"| G["Write & narrate<br/><i>url_context</i>"]
     end
 
     G --> OUT["Blog · Slides · Quiz<br/>Flashcards · Audio · Art"]
@@ -27,17 +27,24 @@ flowchart LR
     style C fill:#ecfdf5,stroke:#059669
 ```
 
-Each paper travels through a pipeline whose every step can fail without stopping the rest:
+**Index** and **Generate** are separate buttons, because they answer different
+questions: indexing makes a paper searchable in chat (seconds), generating makes
+it readable (about a minute). Either can run first, or alone. Every step can fail
+without stopping the rest:
 
 ```mermaid
 stateDiagram-v2
     [*] --> discovered
-    discovered --> resolving: Generate
+
+    discovered --> resolving: Index
     resolving --> fetching: open-access PDF found
-    resolving --> writing: no PDF — fall back to search
-    fetching --> indexing: PDF downloaded
-    fetching --> writing: blocked or paywalled
-    indexing --> writing: full text searchable
+    resolving --> embedding: no PDF
+    fetching --> embedding: PDF downloaded, or blocked
+    embedding --> indexed: chat can now cite it
+    indexed --> [*]
+
+    discovered --> writing: Generate
+    indexed --> writing: Generate
     writing --> media: blog, slides, quiz, cards
     media --> converted: audio + illustration
     writing --> error

@@ -7,8 +7,10 @@ journey
       Create a profile: 5: You
       Search a scholar or add a paper: 5: You
     section Process
-      Select papers and press Generate: 5: You
-      Retrieve, index, write, narrate: 3: ScholarMind
+      Select papers and press Index: 5: You
+      Retrieve and embed the full text: 3: ScholarMind
+      Press Generate when you want to read: 5: You
+      Write, illustrate, narrate: 3: ScholarMind
     section Study
       Read the blog and slides: 5: You
       Take the quiz, flip flashcards: 5: You
@@ -31,25 +33,46 @@ Each profile is an independent library — its own papers, chat history, theme, 
 
 ## 3. Processing
 
-Select papers and press **Generate**. Progress is reported live, per paper:
+Select papers, then choose what you want. The two buttons are independent — run
+either, both, or one and then the other later.
+
+| Button | What it does | Roughly | Gives you |
+| --- | --- | --- | --- |
+| **Index** | Fetches the PDF and embeds it into this profile's search index | 5–10s per paper | Chat that answers from your papers, with citations |
+| **Generate** | Writes the blog, slides, quiz, flashcards, audio and cover art | ~1min per paper | Everything under **Read** |
 
 ```mermaid
 flowchart LR
-    A["Finding<br/>the paper"] --> B["Downloading<br/>PDF"]
-    B --> C["Indexing<br/>full text"]
-    C --> D["Writing blog<br/>& slides"]
-    D --> E["Generating<br/>audio & art"]
-    E --> F["✅ Done"]
+    subgraph IDX["Index"]
+        direction LR
+        A["Finding<br/>the paper"] --> B["Downloading<br/>PDF"]
+        B --> C["Building<br/>embeddings"]
+        A -.->|"no open-access PDF"| C
+        B -.->|"blocked or paywalled"| C
+    end
 
-    A -.->|"no open-access PDF"| D
-    B -.->|"blocked or paywalled"| D
+    subgraph GEN["Generate"]
+        direction LR
+        D["Writing blog<br/>& slides"] --> E["Generating<br/>audio & art"]
+    end
 
+    C --> IX["🟢 Indexed"]
+    E --> F["✅ Readable"]
+
+    style IX fill:#ecfdf5,stroke:#059669
     style F fill:#ecfdf5,stroke:#059669
 ```
 
-The dotted paths matter: when a PDF cannot be retrieved, the paper still produces full content grounded in web search instead. An **open access PDF** badge marks papers where the full text was retrieved — those have the most accurate content.
+The dotted paths matter: when a PDF cannot be retrieved, the paper is still
+indexed — from its abstract, and from the write-up if you have generated one.
+Those papers carry an **Indexed (summary)** badge instead of **Indexed**, so you
+always know which answers rest on full text.
 
-The status bar shows how many papers of the batch are done, and what each in-flight paper is currently doing.
+Indexing first is usually the better order: **Generate** then grounds its writing
+in the indexed full text rather than in a web search.
+
+The status bar shows how many papers of the batch are done, and what each
+in-flight paper is currently doing.
 
 ## 4. Reading
 

@@ -23,6 +23,7 @@ export interface Paper {
   authors: string[];
   summary: string;
   citationCount?: string;
+  /** Artifact-generation lifecycle. Indexing is tracked separately, below. */
   status: 'discovered' | 'downloading' | 'processing' | 'converted' | 'error';
   blogContent?: string;
   blogTitle?: string;
@@ -43,6 +44,13 @@ export interface Paper {
   /** Current pipeline step while processing; cleared when the paper settles. */
   stage?: 'resolving' | 'fetching' | 'indexing' | 'writing' | 'media';
   fileSearchDocName?: string;
+  /**
+   * Indexing runs independently of artifact generation, so it carries its own
+   * status: `status` above tracks only the blog/slides/audio/art half.
+   */
+  indexStatus?: 'indexing' | 'indexed' | 'error';
+  /** Whether the indexed document is the paper's full text or a written summary. */
+  indexedKind?: 'pdf' | 'summary';
 }
 
 export interface Citation {

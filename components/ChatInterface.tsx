@@ -245,7 +245,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
                 : '📚 Library is empty'}
           </button>
           <span className="text-slate-400">
-            {!useWebSearch && indexedCount === 0 ? 'press Generate to index papers' : 'tap to switch'}
+            {!useWebSearch && indexedCount === 0 ? 'press Index to embed papers' : 'tap to switch'}
           </span>
         </div>
         <form onSubmit={handleSubmit} className="flex items-center gap-2 relative">

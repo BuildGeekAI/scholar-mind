@@ -61,3 +61,20 @@ export const indexDocument = async (
     return undefined;
   }
 };
+
+/**
+ * Re-indexing a paper replaces its document, so the superseded one is removed.
+ * Best-effort: a stale document degrades retrieval quality but breaks nothing.
+ */
+export const deleteDocument = async (documentName: string): Promise<void> => {
+  try {
+    // force, or the API refuses with "Cannot delete non-empty Document": the
+    // chunks the document was split into count as children.
+    await (ai().fileSearchStores as any).documents.delete({
+      name: documentName,
+      config: { force: true },
+    });
+  } catch (e) {
+    console.error('Could not delete indexed document:', e);
+  }
+};

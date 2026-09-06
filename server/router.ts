@@ -4,8 +4,8 @@ import { LegacyProfile, Message, Paper } from '../types';
 import { resolveUser, User } from './identity';
 import { blobKey, createBlobStore, profilePrefix } from './blobStore';
 import * as repo from './repository';
-import { createStore, deleteStore } from './fileSearch';
-import { processPapers } from './ingest';
+import { createStore, deleteDocument, deleteStore } from './fileSearch';
+import { PipelineMode, processPapers } from './ingest';
 import { buildProfileZip, pcmToWav } from './export';
 import {
   ask,
@@ -124,6 +124,9 @@ export const createRouter = () => {
     const profile = await owned(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const paperId = c.req.param('paperId');
+    // Drop the indexed document too, or chat keeps citing a deleted paper.
+    const paper = (await repo.listPapers(profile.id)).find(p => p.id === paperId);
+    if (paper?.fileSearchDocName) await deleteDocument(paper.fileSearchDocName);
     await repo.deletePaper(profile.id, paperId);
     await blobs.deleteByPrefix(`${profilePrefix(profile.id)}${paperId}/`);
     return c.json({ ok: true });
@@ -411,21 +414,41 @@ User: ${message}`;
     return c.json(citingPapers);
   });
 
-  // --- Generation pipeline (streams progress as each paper advances) --------
+  // --- Pipeline (streams progress as each paper advances) ------------------
+  // `mode` selects half the pipeline or both: 'index' makes papers searchable,
+  // 'artifacts' writes the blog, slides, quiz, audio and illustration.
   app.post('/profiles/:id/process', async c => {
     const profile = await owned(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
-    const { paperIds } = await c.req.json().catch(() => ({ paperIds: [] }));
+    const { paperIds, mode } = await c.req.json().catch(() => ({ paperIds: [] }));
+
+    const pipelineMode: PipelineMode =
+      mode === 'index' || mode === 'artifacts' ? mode : 'both';
 
     const all = await repo.listPapers(profile.id);
     const selected = all.filter(p => (paperIds ?? []).includes(p.id));
     if (!selected.length) return c.json({ error: 'No papers selected' }, 400);
+    // Store creation at profile creation is best-effort, so indexing heals a
+    // profile that never got one rather than refusing the request.
+    if (pipelineMode !== 'artifacts' && !profile.fileSearchStoreName) {
+      const storeName = await createStore(profile.title);
+      if (!storeName) return c.json({ error: 'Could not create a search index.' }, 502);
+      await repo.updateProfile(c.get('user').id, profile.id, { fileSearchStoreName: storeName });
+      profile.fileSearchStoreName = storeName;
+    }
 
     return streamSSE(c, async stream => {
       try {
-        await processPapers(profile.id, selected, blobs, profile.fileSearchStoreName, async paper => {
-          await stream.writeSSE({ event: 'paper', data: JSON.stringify(paper) });
-        });
+        await processPapers(
+          profile.id,
+          selected,
+          blobs,
+          profile.fileSearchStoreName,
+          pipelineMode,
+          async paper => {
+            await stream.writeSSE({ event: 'paper', data: JSON.stringify(paper) });
+          }
+        );
         await stream.writeSSE({ event: 'done', data: '{}' });
       } catch (error: any) {
         await stream.writeSSE({
