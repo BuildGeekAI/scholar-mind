@@ -16,8 +16,23 @@ export interface FlashCard {
   back: string;
 }
 
+/**
+ * A profile holds more than papers. Every kind is normalized to text on the way
+ * in, so indexing, generation, chat and export stay identical downstream.
+ */
+export type SourceKind =
+  | 'paper'
+  | 'web'
+  | 'wikipedia'
+  | 'youtube'
+  | 'video'
+  | 'audio'
+  | 'document';
+
 export interface Paper {
   id: string;
+  /** Absent on records written before sources existed; treat as 'paper'. */
+  kind?: SourceKind;
   title: string;
   year: string;
   authors: string[];
@@ -56,6 +71,21 @@ export interface Paper {
    * and downloaded it, so this index skipped both steps.
    */
   pdfReused?: boolean;
+
+  // --- Non-paper sources ---------------------------------------------------
+  /** Blob key of an uploaded document, audio or video file. */
+  mediaKey?: string;
+  mediaMime?: string;
+  /** Original filename, for uploads. */
+  fileName?: string;
+  /**
+   * What the source says, extracted once at add time: a transcript for audio
+   * and video, the page text for a URL. Everything downstream reads this
+   * rather than re-fetching the source.
+   */
+  extractedText?: string;
+  /** Duration for audio and video, in seconds, when the model reports one. */
+  durationSeconds?: number;
 }
 
 export interface Citation {

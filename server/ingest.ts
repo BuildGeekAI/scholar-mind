@@ -4,6 +4,7 @@ import { generateAudio, generateIllustration, generatePaperResources } from './g
 import { deleteDocument, indexDocument } from './fileSearch';
 import { fetchPdf, resolvePaperSource } from './paperSource';
 import * as corpus from './corpus';
+import { indexableText } from './sources';
 import * as repo from './repository';
 
 export type ProgressFn = (paper: Paper) => void | Promise<void>;
@@ -127,7 +128,12 @@ const runIndex = async (
   storeName: string,
   setStage: (stage: Paper['stage']) => Promise<void>
 ): Promise<Partial<Paper>> => {
-  const { patch, bytes } = await acquirePdf(profileId, paper, blobs, setStage);
+  // Only papers have a PDF to hunt for. Every other source arrived with its
+  // content already extracted, so indexing is the only step left.
+  const isPaper = (paper.kind ?? 'paper') === 'paper';
+  const { patch, bytes } = isPaper
+    ? await acquirePdf(profileId, paper, blobs, setStage)
+    : { patch: {} as Partial<Paper>, bytes: null };
 
   await setStage('indexing');
   const metadata = {
@@ -139,10 +145,13 @@ const runIndex = async (
 
   const docName = bytes
     ? await indexDocument(storeName, bytes, 'application/pdf', paper.title, metadata)
-    : await indexDocument(storeName, Buffer.from(summaryDocument(paper), 'utf8'), 'text/plain', paper.title, {
-        ...metadata,
-        kind: 'generated-summary',
-      });
+    : await indexDocument(
+        storeName,
+        Buffer.from(isPaper ? summaryDocument(paper) : indexableText(paper), 'utf8'),
+        'text/plain',
+        paper.title,
+        { ...metadata, kind: isPaper ? 'generated-summary' : (paper.kind ?? 'source') }
+      );
 
   if (!docName) return { ...patch, indexStatus: 'error' };
 
@@ -172,7 +181,8 @@ const runArtifacts = async (
 
   // Without an indexed full text, generation grounds on the paper's own URL, so
   // resolving the source first materially improves what gets written.
-  if (!paper.fileSearchDocName && !paper.sourceUrl) {
+  const needsResolution = (paper.kind ?? 'paper') === 'paper';
+  if (needsResolution && !paper.fileSearchDocName && !paper.sourceUrl) {
     await setStage('resolving');
     const source = await resolvePaperSource(paper).catch(() => null);
     if (source) patch.sourceUrl = source.pdfUrl || source.landingUrl;
@@ -182,6 +192,9 @@ const runArtifacts = async (
   const resources = await generatePaperResources(paper, {
     storeName,
     sourceUrl: patch.sourceUrl ?? paper.sourceUrl,
+    // A video, upload or page was read once at add time; generation works from
+    // that transcript rather than watching or fetching it again.
+    knownText: paper.extractedText,
   });
   Object.assign(patch, resources);
 

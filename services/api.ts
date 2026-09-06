@@ -74,6 +74,19 @@ export const searchScholar = (
 export const findPaper = (profileId: string, query: string): Promise<Paper> =>
   send(`/profiles/${profileId}/papers/find`, 'POST', { query });
 
+/** Adds any link — a page, a Wikipedia article, a YouTube video, a PDF. */
+export const addSourceUrl = (profileId: string, url: string): Promise<Paper> =>
+  send(`/profiles/${profileId}/sources`, 'POST', { url });
+
+/** Adds an uploaded document, audio or video file. */
+export const uploadSource = async (profileId: string, file: File): Promise<Paper> => {
+  const form = new FormData();
+  form.append('file', file);
+  return json(
+    await fetch(`/api/profiles/${profileId}/sources/upload`, { method: 'POST', body: form })
+  );
+};
+
 export const fetchCitations = (profileId: string, paperId: string): Promise<Paper[]> =>
   send(`/profiles/${profileId}/papers/${paperId}/citations`, 'POST');
 

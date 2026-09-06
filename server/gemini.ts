@@ -305,10 +305,14 @@ const FAILED_RESOURCES: GeneratedResources = {
  */
 const gatherNotes = async (
   paper: Paper,
-  opts: { storeName?: string; sourceUrl?: string }
+  opts: { storeName?: string; sourceUrl?: string; knownText?: string }
 ): Promise<string> => {
   let tools: Tool[];
   let grounding: string;
+
+  // A non-paper source was read when it was added — a transcript, a page's
+  // text. Re-reading it would cost a second watch or fetch for nothing.
+  if (opts.knownText && opts.knownText.length > 200) return opts.knownText;
 
   if (opts.storeName && paper.fileSearchDocName) {
     tools = [fileSearchTool([opts.storeName])];
@@ -344,7 +348,7 @@ Prose only. Do not use JSON, bullet syntax, or code blocks.`,
 
 export const generatePaperResources = async (
   paper: Paper,
-  opts: { storeName?: string; sourceUrl?: string } = {}
+  opts: { storeName?: string; sourceUrl?: string; knownText?: string } = {}
 ): Promise<GeneratedResources> => {
   try {
     const notes = await gatherNotes(paper, opts);

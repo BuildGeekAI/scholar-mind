@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2 } from 'lucide-react';
+import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2, Link2, Upload } from 'lucide-react';
 import { Citation, Paper, Message, ScholarData, AppState } from '../types';
 import * as api from '../services/api';
 import PaperList from './PaperList';
@@ -63,7 +63,10 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   const [showThemePicker, setShowThemePicker] = useState(false);
 
   // UI States
-  const [inputMode, setInputMode] = useState<'search' | 'add'>('search');
+  const [inputMode, setInputMode] = useState<'search' | 'add' | 'source'>('search');
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isChatOpen, setIsChatOpen] = useState(true);
 
   // Selection State
@@ -325,6 +328,41 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   const handleIndexSelected = () => runPipeline(selectedIds(), 'index');
   const handleGenerateSelected = () => runPipeline(selectedIds(), 'artifacts');
 
+  /** Any link: a page, a Wikipedia article, a YouTube video, a PDF. */
+  const handleAddSourceUrl = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sourceUrl.trim() || !profile) return;
+    setAppState(AppState.SEARCHING);
+    try {
+      const added = await api.addSourceUrl(profile.id, sourceUrl);
+      mergePaper(added);
+      setSelectedPaperIds(prev => new Set(prev).add(added.id));
+      setSourceUrl('');
+    } catch (error: any) {
+      alert(error.message || 'Could not read that link.');
+    } finally {
+      setAppState(AppState.READY);
+    }
+  };
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset immediately so picking the same file twice still fires a change.
+    e.target.value = '';
+    if (!file || !profile) return;
+
+    setUploading(true);
+    try {
+      const added = await api.uploadSource(profile.id, file);
+      mergePaper(added);
+      setSelectedPaperIds(prev => new Set(prev).add(added.id));
+    } catch (error: any) {
+      alert(error.message || 'Could not read that file.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleFetchCitations = async (paper: Paper) => {
     if (!profile) return;
     if (paper.citingPapers && paper.citingPapers.length > 0) return;
@@ -547,6 +585,12 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
              >
                <FilePlus className="w-4 h-4" /> Add Paper
              </button>
+             <button
+               onClick={() => setInputMode('source')}
+               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'source' ? 'bg-white text-scholarly-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+             >
+               <Link2 className="w-4 h-4" /> Add Source
+             </button>
           </div>
 
           {/* Input Form Area */}
@@ -573,6 +617,62 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                     )}
                     </button>
                 </form>
+             ) : inputMode === 'source' ? (
+                <div className="animate-in fade-in duration-300 space-y-3">
+                  <form onSubmit={handleAddSourceUrl} className="relative">
+                    <input
+                      type="text"
+                      value={sourceUrl}
+                      onChange={(e) => setSourceUrl(e.target.value)}
+                      placeholder="Paste a link — YouTube, Wikipedia, an article, a PDF..."
+                      className="w-full pl-6 pr-32 py-4 rounded-2xl border-0 ring-1 ring-slate-200 shadow-lg shadow-slate-200/40 focus:ring-2 focus:ring-scholarly-400 focus:shadow-scholarly-100/50 outline-none transition-all text-lg bg-white/80 backdrop-blur-sm"
+                      disabled={appState === AppState.SEARCHING || uploading}
+                    />
+                    <button
+                      type="submit"
+                      disabled={appState === AppState.SEARCHING || uploading}
+                      className="absolute right-2 top-2 bottom-2 bg-scholarly-600 text-white rounded-xl px-5 hover:bg-scholarly-700 transition-all disabled:bg-slate-300 disabled:shadow-none shadow-md shadow-scholarly-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      {appState === AppState.SEARCHING ? (
+                        <Activity className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <>
+                          <Plus className="w-5 h-5" />
+                          <span className="font-medium">Add</span>
+                        </>
+                      )}
+                    </button>
+                  </form>
+
+                  <div className="flex items-center gap-3 text-sm">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading || appState === AppState.SEARCHING}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {uploading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" /> Reading the file...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4" /> Upload a file
+                        </>
+                      )}
+                    </button>
+                    <span className="text-slate-500">
+                      PDF, text, audio or video — up to 50MB. It is read once and then searchable.
+                    </span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      className="hidden"
+                      accept="application/pdf,text/plain,text/markdown,text/csv,audio/*,video/*"
+                      onChange={handleUpload}
+                    />
+                  </div>
+                </div>
              ) : (
                 <form onSubmit={handleManualAdd} className="animate-in fade-in duration-300">
                     <input

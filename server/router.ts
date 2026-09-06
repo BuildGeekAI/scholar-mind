@@ -6,6 +6,13 @@ import { blobKey, createBlobStore, profilePrefix } from './blobStore';
 import * as repo from './repository';
 import { createStore, deleteDocument, deleteStore } from './fileSearch';
 import { scholarKey, scholarKeysFor } from './corpus';
+import {
+  detectKind,
+  extractFromUpload,
+  extractFromUrl,
+  isSupportedUpload,
+  kindForMime,
+} from './sources';
 import { PipelineMode, processPapers } from './ingest';
 import { buildProfileZip, pcmToWav } from './export';
 import {
@@ -442,6 +449,94 @@ User: ${message}`;
     }
     await repo.upsertPaper(profile.id, paper);
     return c.json(paper, 201);
+  });
+
+  // --- Sources (anything that is not a paper) ------------------------------
+  // A link or an upload is read once, here, and stored as text. Everything
+  // downstream — indexing, generation, chat, export — then treats it exactly
+  // like a paper.
+  const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+  app.post('/profiles/:id/sources', async c => {
+    const profile = await owned(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+    const { url } = await c.req.json().catch(() => ({ url: '' }));
+    if (!url?.trim()) return c.json({ error: 'url is required' }, 400);
+
+    let parsed: URL;
+    try {
+      parsed = new URL(url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`);
+    } catch {
+      return c.json({ error: 'That does not look like a link.' }, 400);
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return c.json({ error: 'Only http and https links can be added.' }, 400);
+    }
+
+    const kind = detectKind(parsed.href);
+    const existing = await repo.listPapers(profile.id);
+    if (existing.some(p => p.sourceUrl === parsed.href)) {
+      return c.json({ error: 'That link is already in this profile.' }, 409);
+    }
+
+    const extracted = await extractFromUrl(parsed.href, kind);
+    const source: Paper = {
+      id: `source-${Date.now()}`,
+      kind,
+      title: extracted.title,
+      year: extracted.year,
+      authors: extracted.authors,
+      summary: extracted.summary,
+      status: 'discovered',
+      sourceUrl: parsed.href,
+      extractedText: extracted.text,
+    };
+    await repo.upsertPaper(profile.id, source);
+    return c.json(source, 201);
+  });
+
+  app.post('/profiles/:id/sources/upload', async c => {
+    const profile = await owned(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+
+    const body = await c.req.parseBody().catch(() => null);
+    const file = body?.file;
+    if (!file || typeof file === 'string') return c.json({ error: 'file is required' }, 400);
+
+    const mime = file.type || 'application/octet-stream';
+    if (!isSupportedUpload(mime)) {
+      return c.json({ error: `${mime} files are not supported.` }, 415);
+    }
+
+    const data = Buffer.from(await file.arrayBuffer());
+    if (data.length > MAX_UPLOAD_BYTES) {
+      return c.json({ error: 'That file is larger than 50MB.' }, 413);
+    }
+
+    const kind = kindForMime(mime);
+    const id = `source-${Date.now()}`;
+    const extracted = await extractFromUpload(data, mime, file.name || 'upload');
+
+    // Bytes stay in the blob store, as everything else does; the Files API copy
+    // is released as soon as extraction finishes.
+    const key = blobKey(profile.id, id, 'media');
+    await blobs.put(key, data, mime);
+
+    const source: Paper = {
+      id,
+      kind,
+      title: extracted.title,
+      year: extracted.year,
+      authors: extracted.authors,
+      summary: extracted.summary,
+      status: 'discovered',
+      extractedText: extracted.text,
+      mediaKey: key,
+      mediaMime: mime,
+      fileName: file.name,
+    };
+    await repo.upsertPaper(profile.id, source);
+    return c.json(source, 201);
   });
 
   app.post('/profiles/:id/papers/:paperId/citations', async c => {
