@@ -95,9 +95,13 @@ export const createRouter = () => {
     const id = c.req.param('id');
     const profile = await owned(c, id);
     if (!profile) return c.json({ error: 'Not found' }, 404);
-    if (profile.fileSearchStoreName) await deleteStore(profile.fileSearchStoreName);
-    await repo.deleteProfile(c.get('user').id, id);
-    await blobs.deleteByPrefix(profilePrefix(id));
+    // Concurrent: the three stores are independent, and deletion latency is
+    // otherwise the sum of a File Search call, a Firestore cascade and a blob sweep.
+    await Promise.all([
+      profile.fileSearchStoreName ? deleteStore(profile.fileSearchStoreName) : Promise.resolve(),
+      repo.deleteProfile(c.get('user').id, id),
+      blobs.deleteByPrefix(profilePrefix(id)).catch(e => console.error('Blob cleanup failed:', e)),
+    ]);
     return c.json({ ok: true });
   });
 
@@ -329,10 +333,16 @@ User: ${message}`;
     try {
       const result = await searchScholarAndPapers(query);
       await repo.upsertPapers(profile.id, result.papers);
+
+      // Name the profile after the scholar rather than leaving the raw query,
+      // which is often a Google Scholar URL.
+      const scholarName = result.name || query;
+      const untitled = !profile.title || profile.title === 'Untitled profile';
       const updated = await repo.updateProfile(c.get('user').id, profile.id, {
-        scholarName: query,
+        scholarName,
         affiliation: result.affiliation,
         topics: result.topics,
+        ...(untitled ? { title: scholarName } : {}),
       });
       return c.json({ profile: updated, papers: result.papers });
     } catch (error: any) {

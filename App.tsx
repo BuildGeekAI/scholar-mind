@@ -69,13 +69,21 @@ const App: React.FC = () => {
     }
   };
 
+  /**
+   * Optimistic: deleting a profile also tears down its File Search store, its
+   * Firestore subcollections and its blobs, which takes long enough to feel
+   * broken if the UI waits. The row disappears immediately and is restored if
+   * the server rejects it.
+   */
   const handleDeleteProfile = async (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    const snapshot = profiles;
+    setProfiles(prev => prev.filter(p => p.id !== id));
+    if (activeProfileId === id) setActiveProfileId(null);
     try {
       await api.deleteProfile(id);
-      setProfiles(prev => prev.filter(p => p.id !== id));
-      if (activeProfileId === id) setActiveProfileId(null);
     } catch (err: any) {
+      setProfiles(snapshot);
       alert(err.message || 'Could not delete profile.');
     }
   };

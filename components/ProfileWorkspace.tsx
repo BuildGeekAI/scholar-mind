@@ -108,11 +108,18 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     return () => clearTimeout(handle);
   }, [title, currentTheme, profile]);
 
+  // The server names an untitled profile after the scholar it resolved, so adopt
+  // that. Guarded against a raw URL ever becoming the title.
+  const looksLikeUrl = (value: string) => /^(https?:|www\.)|scholar\.google/i.test(value.trim());
+
   useEffect(() => {
-    if (profile && (title === 'Untitled profile' || !title) && profile.scholarName) {
-      setTitle(profile.scholarName);
-    }
-  }, [profile?.scholarName]);
+    if (!profile) return;
+    const candidate = profile.title && profile.title !== 'Untitled profile'
+      ? profile.title
+      : profile.scholarName;
+    if (!candidate || looksLikeUrl(candidate)) return;
+    if (!title || title === 'Untitled profile') setTitle(candidate);
+  }, [profile?.title, profile?.scholarName]);
 
   // Apply Theme
   useEffect(() => {
@@ -170,6 +177,10 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     try {
       const { profile: updated, papers: found } = await api.searchScholar(profile.id, scholarName);
       setProfile(updated);
+      if (updated.title && !looksLikeUrl(updated.title)) {
+        setTitle(updated.title);
+        savedRef.current = { title: updated.title, theme: currentTheme };
+      }
       setPapers(found);
       setSelectedPaperIds(new Set(found.map(p => p.id)));
       setAppState(AppState.READY);

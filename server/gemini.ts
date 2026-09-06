@@ -134,6 +134,7 @@ const PAPER_FIELDS = {
 const SCHOLAR_SCHEMA = {
   type: 'object',
   properties: {
+    name: { type: 'string' },
     affiliation: { type: 'string' },
     topics: { type: 'array', items: { type: 'string' } },
     papers: {
@@ -141,7 +142,7 @@ const SCHOLAR_SCHEMA = {
       items: { type: 'object', properties: PAPER_FIELDS, required: ['title'] },
     },
   },
-  required: ['affiliation', 'topics', 'papers'],
+  required: ['name', 'affiliation', 'topics', 'papers'],
 };
 
 const SINGLE_PAPER_SCHEMA = { type: 'object', properties: PAPER_FIELDS, required: ['title'] };
@@ -209,20 +210,24 @@ const toPaper = (raw: any, id: string): Paper => ({
 // --- Discovery (google_search) ---------------------------------------------
 export const searchScholarAndPapers = async (
   scholarName: string
-): Promise<{ affiliation: string; topics: string[]; papers: Paper[] }> => {
+): Promise<{ name: string; affiliation: string; topics: string[]; papers: Paper[] }> => {
   const isUrl = /http|www\.|scholar\.google/i.test(scholarName);
   const input = isUrl
     ? `Use Google Search to open and analyse this scholar profile URL: "${scholarName}".
-       Extract the scholar's affiliation, research topics, and their 5-10 most significant
-       publications with title, year, authors, citation count, and a short summary.`
-    : `Search for the scholar "${scholarName}". Return their affiliation, research topics,
-       and their top papers with title, year, authors, approximate citation count, and a
-       two-sentence summary each.`;
+       Return the scholar's full personal name exactly as it appears on the profile — a
+       person's name, never a URL, username, or ID. Also return their affiliation, research
+       topics, and their 5-10 most significant publications with title, year, authors,
+       citation count, and a short summary.`
+    : `Search for the scholar "${scholarName}". Return their full name as normally written,
+       their affiliation, research topics, and their top papers with title, year, authors,
+       approximate citation count, and a two-sentence summary each.`;
 
   // Re-throws by design: the workspace surfaces this failure to the user.
   const interaction = await ask({ input, schema: SCHOLAR_SCHEMA, tools: [googleSearchTool()] });
   const data = extractJson<any>(interaction, {});
   return {
+    // Falls back to the query, but never to a raw URL — that becomes the profile title.
+    name: data.name || (isUrl ? '' : scholarName),
     affiliation: data.affiliation || 'Unknown Affiliation',
     topics: data.topics || [],
     papers: (data.papers || []).map((p: any, i: number) => toPaper(p, `paper-${i}-${Date.now()}`)),
