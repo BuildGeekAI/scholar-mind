@@ -1,119 +1,133 @@
-# 🎓 ScholarMind - AI Research Companion
+# 🎓 ScholarMind — AI Research Companion
 
-**ScholarMind** is a next-generation research assistant that transforms static academic papers into interactive, multimedia knowledge bases. Built with **React** and the **Google Gemini API**, it leverages retrieval-augmented generation (RAG) and multimodal capabilities to help students and researchers understand complex topics faster.
+ScholarMind turns academic papers into an interactive, multimedia knowledge base. Point it at a scholar or a paper title, and it retrieves the open-access PDF, indexes the full text for semantic retrieval, and generates a blog post, slide deck, quiz, flashcards, narrated audio, and cover art — then lets you ask questions grounded in what it read.
 
-![ScholarMind UI](https://via.placeholder.com/1200x600?text=ScholarMind+Dashboard)
-
-## ✨ Key Features
-
-### 🔍 Discovery & Library Management
-*   **Scholar Search:** Scrape and analyze scholar profiles using Google Search Grounding to auto-populate their top papers.
-*   **Manual Addition:** Add specific papers by title or topic to build a custom "Mixed Collection" library.
-*   **Persistent Library:** Your profile, papers, and chat history are automatically saved to Local Storage, so you never lose your research session.
-
-### 🧠 Deep Analysis Pipeline
-*   **Smart Summaries:** Automatically fetches abstracts and metadata using Google Search.
-*   **Citation Network:** Find and analyze papers that cite the current work to understand its impact.
-*   **Multimodal Generation:**
-    *   📝 **Blogs:** Converts dense academic text into engaging, markdown-formatted blog posts.
-    *   🎨 **Illustrations:** Generates abstract, data-viz style cover art for every paper using `gemini-2.5-flash-image`.
-    *   📊 **Slides:** Auto-generates key takeaways and slide decks.
-    *   🃏 **Flashcards:** Creates active recall study materials.
-    *   🧩 **Quizzes:** Generates multiple-choice questions with explanations.
-
-### 🎧 Audio & Conversational Learning
-*   **AI Podcast Intros:** Generates natural-sounding audio summaries using `gemini-2.5-flash-preview-tts`.
-*   **Interactive Host:** A conversational quiz mode where an AI host (with selectable voices like Kore, Puck, Zephyr) reads questions and provides audio feedback on your answers.
-
-### 💬 Context-Aware Chat Bot
-*   **Scholar Bot:** A persistent chat assistant on the right panel.
-*   **RAG (Retrieval Augmented Generation):** The bot has read access to the full generated content of your library. It answers questions specifically based on the papers you have analyzed.
-*   **Search Integration:** Can browse the live web to answer questions outside the scope of the loaded papers.
-
-### 🎨 Modern UI/UX
-*   **Glassmorphism:** Beautiful, translucent UI with mesh gradient backgrounds.
-*   **Dynamic Theming:** Switch instantly between 5 themes (Ocean, Violet, Emerald, Rose, Amber).
-*   **Responsive:** optimized for desktop and tablet research workflows.
+Built on Google Cloud: **Gemini** for generation and retrieval, **Firestore** for state, **Cloud Storage** for artifacts, and **Cloud Run** for hosting. It runs the same way locally.
 
 ---
 
-## 🛠️ Tech Stack
+## ✨ What it does
 
-*   **Frontend:** React 19, TypeScript, Vite
-*   **Styling:** Tailwind CSS (Custom Configuration)
-*   **AI SDK:** `@google/genai`
-*   **Icons:** Lucide React
-*   **State:** LocalStorage persistence
+**Discovery.** Search a scholar by name or Google Scholar URL to pull their affiliation, topics, and most-cited papers. Or add individual papers by title.
 
----
+**Ingestion.** For each paper, ScholarMind resolves an open-access PDF (arXiv → Crossref → Unpaywall → search), downloads it, and indexes it into a per-profile **File Search** store. Generation is then grounded in the paper's actual full text rather than search snippets.
 
-## 🤖 Gemini Models Used
+**Generation.** A blog post, a 4–6 slide deck, a 5-question quiz with explanations, 5 flashcards, a narrated audio summary, and generated cover art.
 
-ScholarMind utilizes the latest experimental models from Google DeepMind:
+**Chat.** Ask questions answered from your indexed library, with citations back to the source documents. A toggle switches a turn to live web search instead.
 
-| Task | Model | Description |
-| :--- | :--- | :--- |
-| **Search & Reasoning** | `gemini-3-flash-preview` | Used for finding scholars, scraping papers, RAG chat, and generating text resources. |
-| **Image Generation** | `gemini-2.5-flash-image` | Creates unique cover art for every research paper. |
-| **Text-to-Speech** | `gemini-2.5-flash-preview-tts` | Generates high-quality, low-latency audio for summaries and the quiz host. |
+**Export.** Download any profile as a ZIP: `blog.md`, `slides.md`, `quiz.md`, `flashcards.csv`, `metadata.json`, the illustration, a playable `audio.wav`, and the source PDF.
 
 ---
 
-## 🚀 Getting Started
+## 🏗 Architecture
 
-### Prerequisites
+```
+Browser (no API key, no persisted data)
+   │  fetch /api/*
+   ▼
+Hono router ─── mounted by Vite in development AND Cloud Run in production
+   ├─ Firestore ....... profiles / papers / messages
+   ├─ Cloud Storage ... pdf, illustration, audio       (filesystem locally)
+   ├─ Secret Manager .. GEMINI_API_KEY                 (.env locally)
+   └─ Gemini Developer API
+        google_search → discovery
+        url_context   → reads paper URLs directly, including PDFs
+        file_search   → retrieval over your library, with citations
+```
 
-1.  **Node.js** (v18 or higher)
-2.  **Google AI Studio API Key** (Get one [here](https://aistudio.google.com/))
-    *   *Note: Ensure you are in a region that supports the Gemini 3 and 2.5 experimental models.*
+The browser holds no credentials and no data. One router implementation serves both environments, so there is nothing that works locally but not deployed.
 
-### Installation
-
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/yourusername/scholarmind.git
-    cd scholarmind
-    ```
-
-2.  **Install dependencies:**
-    ```bash
-    npm install
-    ```
-
-3.  **Set up Environment Variables:**
-    Create a `.env` file in the root directory:
-    ```env
-    API_KEY=your_google_gemini_api_key_here
-    ```
-
-4.  **Run the development server:**
-    ```bash
-    npm start
-    ```
+See [docs/architecture](docs/architecture/README.md) for the reasoning behind these choices.
 
 ---
 
-## 📖 Usage Guide
+## 🤖 Models
 
-1.  **Search or Add:**
-    *   Toggle the input bar to **Search Scholar** to find an author (e.g., "Geoffrey Hinton").
-    *   Or toggle to **Add Paper** to analyze a specific topic (e.g., "Attention is All You Need").
+| Purpose | Model |
+| :--- | :--- |
+| Search, reasoning, generation, chat | `gemini-3.8-flash` |
+| Cover illustrations | `gemini-3.1-flash-image` |
+| Speech | `gemini-3.1-flash-tts-preview` |
+| Retrieval embeddings | `gemini-embedding-2` |
 
-2.  **Select & Generate:**
-    *   Select the papers you are interested in using the checkboxes.
-    *   Click the **Generate** button. The app will asynchronously fetch deep details, write blogs, create slides, and generate audio/images.
+Calls use the **Interactions API** (`ai.interactions.create`), except speech and image generation, which remain on `generateContent`.
 
-3.  **Read & Listen:**
-    *   Click **Read** on any processed paper to open the modal.
-    *   Switch tabs to view **Slides**, take a **Quiz**, or flip **Flashcards**.
-    *   Click **Listen** to hear the audio summary.
+---
 
-4.  **Chat:**
-    *   Use the **Scholar Bot** on the right to ask specific questions like "Compare the methodologies of paper A and B".
-    *   Use `analyze [Paper Title]` in the chat to quickly add a new paper to your library via conversation.
+## 🚀 Running locally
+
+**Prerequisites:** Node 22+, a [Google AI Studio API key](https://aistudio.google.com/apikey), and Java 11+ (for the Firestore emulator).
+
+```bash
+npm install
+cp .env.example .env       # then add your GEMINI_API_KEY
+```
+
+Minimum `.env`:
+
+```env
+GEMINI_API_KEY=AIzaSy...
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8085
+GOOGLE_CLOUD_PROJECT=scholarmind-local
+FILE_SEARCH_STORE_PREFIX=dev-
+```
+
+Then, in two terminals:
+
+```bash
+npm run emulator     # Firestore emulator on :8085
+npm run dev:local    # app on :3000
+```
+
+Check configuration at any time with `curl localhost:3000/api/healthz`:
+
+```json
+{"ok": true, "geminiKey": "configured", "firestore": "emulator", "blobs": "filesystem"}
+```
+
+> **Note:** there is no File Search emulator. Retrieval always calls the real API, even locally — hence `FILE_SEARCH_STORE_PREFIX`, which keeps local stores easy to identify and clean up.
+
+Full setup, including running against a real GCP project instead of emulators, is in [docs/development](docs/development/README.md).
+
+---
+
+## ☁️ Deploying to GCP
+
+```bash
+gcloud builds submit --config cloudbuild.yaml
+```
+
+The service deploys private (`--no-allow-unauthenticated`) and expects IAP in front of it. Full provisioning — service account, bucket, Firestore, Secret Manager, IAP — is in [docs/deployment](docs/deployment/README.md).
+
+---
+
+## 📜 Scripts
+
+| Command | Purpose |
+| :--- | :--- |
+| `npm run dev` | Vite dev server with the API mounted |
+| `npm run dev:local` | Same, pointed at the Firestore emulator |
+| `npm run emulator` | Firestore emulator |
+| `npm run build` | Production client build |
+| `npm start` | Production server (serves `dist/` plus the API) |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run docker:build` | Build the container image |
+
+---
+
+## 📁 Layout
+
+```
+server/       API: router, Firestore repository, blob store, Gemini, ingestion, export
+components/   React UI
+services/     api.ts — the browser's only server interface
+docs/         Architecture, deployment, development, features, SDLC
+scripts/      API verification spikes
+```
 
 ---
 
 ## 📄 License
 
-MIT License. Open source for educational and research purposes.
+MIT. Open source for educational and research purposes.

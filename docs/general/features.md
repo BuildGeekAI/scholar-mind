@@ -1,25 +1,72 @@
-# ScholarMind Features & User Guide
+# Features & User Guide
 
-## 1. Scholar Discovery
-- **Search:** Enter a researcher's name (e.g., "Demis Hassabis") or a Google Scholar profile URL.
-- **Analysis:** The AI scrapes the web to find their affiliation, top topics, and most cited papers.
-- **Manual Add:** If you want to analyze a specific paper not in the top list, toggle to "Add Paper" and enter the title.
+## 1. Profiles
 
-## 2. Deep Processing Pipeline
-Once papers are added to your list, select them and click **Generate**. The app runs a multi-step pipeline:
-1.  **Metadata Fetching:** Retrieves abstract and citation counts.
-2.  **Blog Generation:** writes a 500-word educational blog post.
-3.  **Slide Deck:** Creates a 4-6 slide summary.
-4.  **Quiz & Flashcards:** Generates active recall study materials.
-5.  **Audio Synthesis:** Creates a podcast-style intro.
-6.  **Illustration:** Generates a cover image.
+Each profile is an independent library — its own papers, chat history, theme, and File Search index. Create one per scholar or topic. Everything is stored server-side, so a profile follows you across browsers and devices.
 
-## 3. Interactive Learning
-- **Reader Mode:** Click "Read" to open the paper.
-- **Audio Player:** Listen to the generated summary.
-- **Conversational Quiz:** In the Quiz tab, enable "Conversational Mode" to have an AI host read questions to you and provide verbal feedback on your answers.
+## 2. Discovery
 
-## 4. Research Chat
-- **RAG Chat:** The "Scholar Bot" on the right has access to the *generated content* of your papers.
-- **Context:** It knows what papers you have processed.
-- **Citations:** It can perform live web searches to find citing papers or related work.
+**Search a scholar.** Enter a name ("Geoffrey Hinton") or a Google Scholar profile URL. ScholarMind returns their affiliation, research topics, and most-cited papers.
+
+**Add a paper.** Switch to "Add Paper" and enter a title to add it individually.
+
+## 3. Processing
+
+Select papers and press **Generate**. Per paper, the server:
+
+1. Resolves an open-access PDF — arXiv, then Crossref, then Unpaywall, then search
+2. Downloads it and indexes the full text for retrieval
+3. Writes a blog post, 4–6 slides, a 5-question quiz, and 5 flashcards
+4. Generates a narrated audio summary and cover art
+
+Progress streams into the UI as each paper advances. Papers whose PDF cannot be found still produce content, grounded in web search instead — a missing PDF degrades quality, it does not block.
+
+An "open access PDF" badge marks papers where the full text was retrieved; those have the most accurate generated content.
+
+## 4. Reading
+
+**Read** opens the paper viewer:
+
+- **Blog** — the generated article, with cover art
+- **Slides** — the deck
+- **Quiz** — multiple choice with explanations
+- **Flashcards** — click to flip
+
+**Listen** plays the narrated summary.
+
+**Conversational quiz** — in the Quiz tab, enable conversational mode and an AI host reads questions aloud and responds to your answers. Five voices: Kore, Puck, Charon, Fenrir, Zephyr.
+
+## 5. Chat
+
+The Scholar Bot answers from your library, citing the documents it used.
+
+**One grounding mode per message.** A toggle above the input switches between:
+
+- **📚 Using your library** — semantic retrieval over your indexed papers, with citations
+- **🌐 Searching the web** — live web search for anything outside your library
+
+They cannot be combined: the API rejects requests that attach both. The toggle makes the choice explicit rather than guessing.
+
+You can also type `analyze [paper title]` to find, add, and process a paper from the conversation.
+
+## 6. Export
+
+The download icon on a profile card produces a ZIP:
+
+```
+profile-name/
+  paper-title/
+    blog.md          (with YAML front matter)
+    slides.md
+    quiz.md          (answers marked)
+    flashcards.csv
+    metadata.json
+    illustration.jpg
+    audio.wav        (playable, 24kHz mono)
+    paper.pdf        (when retrieved)
+  README.md
+```
+
+## 7. Themes
+
+Five palettes — Ocean, Violet, Emerald, Rose, Amber — applied instantly and saved per profile.
