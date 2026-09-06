@@ -1,0 +1,8 @@
+{
+  "name": "ScholarMind",
+  "description": "An AI-powered research assistant that converts scholar profiles into interactive knowledge bases using RAG and generative blogs.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
