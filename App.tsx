@@ -176,7 +176,13 @@ const App: React.FC = () => {
         onToggleTheme={toggleTheme}
         onSelectProfile={setActiveProfileId}
         onDeleteProfile={(id, e) => {
-          if (window.confirm('Are you sure you want to delete this profile?')) {
+          // Stopped before the prompt, not inside the handler: otherwise
+          // cancelling the delete still let the click reach the card and
+          // opened the profile the user just decided to keep.
+          e.stopPropagation();
+          const profile = profiles.find(p => p.id === id);
+          const name = profile?.title || 'this profile';
+          if (window.confirm(`Delete “${name}”? Its sources, chat and search index go with it. This cannot be undone.`)) {
             handleDeleteProfile(id, e);
           }
         }}

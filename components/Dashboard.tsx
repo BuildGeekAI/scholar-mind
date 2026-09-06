@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, MoreVertical, Search, X, Download, Sun, Moon } from 'lucide-react';
+import { Plus, Trash2, Search, X, Download, Sun, Moon } from 'lucide-react';
 import { Theme } from './theme';
 import * as api from '../services/api';
 import LandingSearch from './LandingSearch';
@@ -137,20 +137,25 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
                    >
                       <div className="flex justify-between items-start">
                          <span className="text-4xl filter drop-shadow-sm transition-transform group-hover:scale-110">{profile.emoji}</span>
-                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                         {/* Dimmed rather than hidden: opacity-0 made these
+                             unreachable on touch, where nothing ever hovers. */}
+                         <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100 focus-within:opacity-100 transition-all">
                            <a
                              href={api.exportUrl(profile.id)}
                              onClick={(e) => e.stopPropagation()}
                              title="Export this profile as a ZIP"
-                             className="p-1.5 rounded-full hover:bg-scholarly-50 text-subtle hover:text-scholarly-600 transition-colors"
+                             aria-label={`Export ${profile.title} as a ZIP`}
+                             className="p-1.5 rounded-full hover:bg-scholarly-50 dark:hover:bg-scholarly-500/15 text-subtle hover:text-scholarly-600 transition-colors"
                            >
                               <Download className="w-5 h-5" />
                            </a>
                            <button 
                              onClick={(e) => onDeleteProfile(profile.id, e)}
-                             className="p-1.5 rounded-full hover:bg-red-50 dark:bg-red-500/15 text-subtle hover:text-red-500 dark:text-red-300 transition-all"
+                             title="Delete this profile"
+                             aria-label={`Delete ${profile.title}`}
+                             className="p-1.5 rounded-full hover:bg-red-50 dark:hover:bg-red-500/15 text-subtle hover:text-red-500 dark:hover:text-red-300 transition-all"
                            >
-                              <MoreVertical className="w-5 h-5" />
+                              <Trash2 className="w-5 h-5" />
                            </button>
                          </div>
                       </div>
