@@ -1,41 +1,12 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2, Link2, Upload } from 'lucide-react';
+import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2, Link2, Upload, Sun, Moon } from 'lucide-react';
 import { Citation, Paper, Message, ScholarData, AppState } from '../types';
+import { Theme } from './theme';
 import * as api from '../services/api';
 import PaperList from './PaperList';
 import BlogReader from './BlogReader';
 import ChatInterface from './ChatInterface';
 
-// Theme Configuration
-const THEMES = {
-  Ocean: {
-    50: '240 249 255', 100: '224 242 254', 200: '186 230 253', 300: '125 211 252',
-    400: '56 189 248', 500: '14 165 233', 600: '2 132 199', 700: '3 105 161',
-    800: '7 89 133', 900: '12 74 110'
-  },
-  Violet: {
-    50: '245 243 255', 100: '237 233 254', 200: '221 214 254', 300: '196 181 253',
-    400: '167 139 250', 500: '139 92 246', 600: '124 58 237', 700: '109 40 217',
-    800: '91 33 182', 900: '76 29 149'
-  },
-  Emerald: {
-    50: '236 253 245', 100: '209 250 229', 200: '167 243 208', 300: '110 231 183',
-    400: '52 211 153', 500: '16 185 129', 600: '5 150 105', 700: '4 120 87',
-    800: '6 95 70', 900: '6 78 59'
-  },
-  Rose: {
-    50: '255 241 242', 100: '255 228 230', 200: '254 205 211', 300: '253 164 175',
-    400: '251 113 133', 500: '244 63 94', 600: '225 29 72', 700: '190 18 60',
-    800: '159 18 57', 900: '136 19 55'
-  },
-  Amber: {
-    50: '255 251 235', 100: '254 243 199', 200: '253 230 138', 300: '252 211 77',
-    400: '251 191 36', 500: '245 158 11', 600: '217 119 6', 700: '180 83 9',
-    800: '146 64 14', 900: '120 53 15'
-  }
-};
-
-type ThemeName = keyof typeof THEMES;
 
 interface ProfileWorkspaceProps {
   profileId: string;
@@ -43,16 +14,17 @@ interface ProfileWorkspaceProps {
   onDelete: () => void;
   /** Switches to an existing profile — used when a search turns out to duplicate one. */
   onOpenProfile: (id: string) => void;
+  theme: Theme;
+  onToggleTheme: () => void;
 }
 
-const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, onDelete, onOpenProfile }) => {
+const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, onDelete, onOpenProfile, theme, onToggleTheme }) => {
   // Server-owned state
   const [profile, setProfile] = useState<api.ProfileRecord | null>(null);
   const [papers, setPapers] = useState<Paper[]>([]);
   const [chatMessages, setChatMessages] = useState<Message[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [currentTheme, setCurrentTheme] = useState<ThemeName>('Ocean');
   const [title, setTitle] = useState('');
 
   const [scholarName, setScholarName] = useState('');
@@ -60,7 +32,6 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [activePaper, setActivePaper] = useState<Paper | null>(null);
   const [isChatProcessing, setIsChatProcessing] = useState(false);
-  const [showThemePicker, setShowThemePicker] = useState(false);
 
   // UI States
   const [inputMode, setInputMode] = useState<'search' | 'add' | 'source'>('search');
@@ -85,7 +56,6 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
         setPapers(ps);
         setChatMessages(messages);
         setTitle(p.title);
-        setCurrentTheme((p.theme as ThemeName) || 'Ocean');
         setAppState(ps.length ? AppState.READY : AppState.IDLE);
       })
       .catch(e => !cancelled && setLoadError(e.message));
@@ -105,16 +75,16 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   }, [profile, papers]);
 
   // Persist title and theme edits, debounced so typing does not spam the API.
-  const savedRef = useRef({ title: '', theme: '' });
+  const savedRef = useRef({ title: '' });
   useEffect(() => {
     if (!profile) return;
-    if (savedRef.current.title === title && savedRef.current.theme === currentTheme) return;
+    if (savedRef.current.title === title) return;
     const handle = setTimeout(() => {
-      savedRef.current = { title, theme: currentTheme };
-      api.updateProfile(profile.id, { title, theme: currentTheme }).catch(console.error);
+      savedRef.current = { title };
+      api.updateProfile(profile.id, { title }).catch(console.error);
     }, 600);
     return () => clearTimeout(handle);
-  }, [title, currentTheme, profile]);
+  }, [title, profile]);
 
   // The server names an untitled profile after the scholar it resolved, so adopt
   // that. Guarded against a raw URL ever becoming the title.
@@ -129,16 +99,6 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     if (!title || title === 'Untitled profile') setTitle(candidate);
   }, [profile?.title, profile?.scholarName]);
 
-  // Apply Theme
-  useEffect(() => {
-    const root = document.documentElement;
-    const colors = THEMES[currentTheme];
-    if (colors) {
-        Object.entries(colors).forEach(([shade, value]) => {
-        root.style.setProperty(`--primary-${shade}`, value);
-        });
-    }
-  }, [currentTheme]);
 
   const isBusy = useCallback(
     (p: Paper) =>
@@ -216,7 +176,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     setProfile(updated);
     if (updated.title && !looksLikeUrl(updated.title)) {
       setTitle(updated.title);
-      savedRef.current = { title: updated.title, theme: currentTheme };
+      savedRef.current = { title: updated.title };
     }
     setPapers(found);
     setSelectedPaperIds(new Set(found.map(p => p.id)));
@@ -461,9 +421,9 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
 
   if (loadError) {
     return (
-      <div className="h-screen w-full flex flex-col items-center justify-center gap-4 bg-slate-50 text-center px-6">
-        <p className="text-slate-800 font-semibold">Could not load this profile.</p>
-        <p className="text-slate-500 text-sm max-w-md">{loadError}</p>
+      <div className="h-screen w-full flex flex-col items-center justify-center gap-4 bg-surface text-center px-6">
+        <p className="text-ink font-semibold">Could not load this profile.</p>
+        <p className="text-muted text-sm max-w-md">{loadError}</p>
         <button onClick={onBack} className="px-4 py-2 rounded-lg bg-scholarly-600 text-white text-sm font-medium">
           Back to Dashboard
         </button>
@@ -473,14 +433,14 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
 
   if (!profile) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-slate-50">
+      <div className="h-screen w-full flex items-center justify-center bg-surface">
         <Loader2 className="w-6 h-6 text-scholarly-600 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col md:flex-row h-screen w-full bg-slate-50 overflow-hidden font-sans transition-colors duration-500 relative">
+    <div className="flex flex-col md:flex-row h-screen w-full bg-surface overflow-hidden font-sans transition-colors duration-500 relative">
       
       {/* Background Decor */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
@@ -493,7 +453,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
       <div className="flex-1 flex flex-col h-full overflow-hidden relative z-10">
         
         {/* Header/Input Area */}
-        <div className="glass-panel p-6 md:p-8 border-b border-white/40 shadow-sm z-20">
+        <div className="glass-panel p-6 md:p-8 border-b border-line/40 shadow-sm z-20">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <button 
@@ -501,7 +461,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                 className="p-2 -ml-2 rounded-full hover:bg-black/5 transition-colors shrink-0"
                 title="Back to Dashboard"
               >
-                 <ArrowLeft className="w-5 h-5 text-slate-700" />
+                 <ArrowLeft className="w-5 h-5 text-ink" />
               </button>
               <div className="bg-gradient-to-br from-scholarly-500 to-scholarly-700 p-2.5 rounded-xl shadow-lg shadow-scholarly-200/50 shrink-0">
                 <span className="text-xl leading-none flex items-center justify-center h-6 w-6">{profile.emoji}</span>
@@ -512,12 +472,12 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                         type="text" 
                         value={title}
                         onChange={(e) => setTitle(e.target.value)}
-                        className="text-xl font-serif font-bold text-slate-900 tracking-tight leading-none bg-transparent border-none focus:ring-0 p-0 w-full placeholder:text-slate-400 focus:outline-none"
+                        className="text-xl font-serif font-bold text-ink tracking-tight leading-none bg-transparent border-none focus:ring-0 p-0 w-full placeholder:text-subtle focus:outline-none"
                         placeholder="Untitled Profile"
                     />
-                    <Edit3 className="w-3.5 h-3.5 text-slate-400 absolute -right-4 top-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <Edit3 className="w-3.5 h-3.5 text-subtle absolute -right-4 top-1 opacity-0 group-hover:opacity-100 transition-opacity" />
                  </div>
-                 <p className="text-xs text-slate-500 font-medium mt-1">Edited {new Date(profile.updatedAt).toLocaleTimeString()}</p>
+                 <p className="text-xs text-muted font-medium mt-1">Edited {new Date(profile.updatedAt).toLocaleTimeString()}</p>
               </div>
             </div>
 
@@ -526,7 +486,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
               {(scholar || chatMessages.length > 0) && (
                 <button
                   onClick={handleClearSession}
-                  className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                  className="p-2 rounded-lg hover:bg-panel-2 text-subtle hover:text-ink transition-colors"
                   title="Clear Papers & Chat"
                 >
                   <Eraser className="w-5 h-5" />
@@ -536,58 +496,41 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
               {/* Delete Profile Button */}
               <button
                   onClick={handleDeleteProfile}
-                  className="p-2 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors"
+                  className="p-2 rounded-lg hover:bg-red-50 dark:bg-red-500/15 text-subtle hover:text-red-500 dark:text-red-300 transition-colors"
                   title="Delete Profile"
               >
                   <Trash2 className="w-5 h-5" />
               </button>
 
-              {/* Theme Picker */}
-              <div className="relative">
-                <button 
-                  onClick={() => setShowThemePicker(!showThemePicker)}
-                  className="p-2 rounded-lg hover:bg-white/50 text-slate-600 transition-colors"
-                  title="Change Theme"
-                >
-                  <Palette className="w-5 h-5" />
-                </button>
-                
-                {showThemePicker && (
-                  <div className="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-xl border border-slate-100 p-2 min-w-[140px] animate-in fade-in zoom-in-95 duration-200 z-50">
-                    <div className="text-xs font-bold text-slate-400 px-2 py-1 uppercase tracking-wider mb-1">Theme</div>
-                    {Object.keys(THEMES).map((theme) => (
-                      <button
-                        key={theme}
-                        onClick={() => { setCurrentTheme(theme as ThemeName); setShowThemePicker(false); }}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${currentTheme === theme ? 'bg-scholarly-50 text-scholarly-700' : 'hover:bg-slate-50 text-slate-600'}`}
-                      >
-                        <div className={`w-3 h-3 rounded-full bg-${theme === 'Ocean' ? 'sky' : theme === 'Violet' ? 'violet' : theme === 'Emerald' ? 'emerald' : theme === 'Rose' ? 'rose' : 'amber'}-500`} style={{ backgroundColor: `rgb(${THEMES[theme as ThemeName][500]})` }}></div>
-                        {theme}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* Light / dark */}
+              <button
+                onClick={onToggleTheme}
+                className="p-2 rounded-lg hover:bg-panel-2 text-muted hover:text-ink transition-colors"
+                title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
+                aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              >
+                {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              </button>
             </div>
           </div>
 
           {/* Toggle for Data Addition */}
-          <div className="flex bg-slate-100/50 p-1 rounded-xl mb-4 w-fit border border-white/20">
+          <div className="flex bg-panel-2/50 p-1 rounded-xl mb-4 w-fit border border-line/20">
              <button
                onClick={() => setInputMode('search')}
-               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'search' ? 'bg-white text-scholarly-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'search' ? 'bg-panel text-scholarly-700 shadow-sm' : 'text-muted hover:text-ink'}`}
              >
                <Search className="w-4 h-4" /> Search Scholar
              </button>
              <button
                onClick={() => setInputMode('add')}
-               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'add' ? 'bg-white text-scholarly-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'add' ? 'bg-panel text-scholarly-700 shadow-sm' : 'text-muted hover:text-ink'}`}
              >
                <FilePlus className="w-4 h-4" /> Add Paper
              </button>
              <button
                onClick={() => setInputMode('source')}
-               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'source' ? 'bg-white text-scholarly-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${inputMode === 'source' ? 'bg-panel text-scholarly-700 shadow-sm' : 'text-muted hover:text-ink'}`}
              >
                <Link2 className="w-4 h-4" /> Add Source
              </button>
@@ -602,13 +545,13 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                     value={scholarName}
                     onChange={(e) => setScholarName(e.target.value)}
                     placeholder="Enter scholar name or Google Scholar profile URL..."
-                    className="w-full pl-6 pr-14 py-4 rounded-2xl border-0 ring-1 ring-slate-200 shadow-lg shadow-slate-200/40 focus:ring-2 focus:ring-scholarly-400 focus:shadow-scholarly-100/50 outline-none transition-all text-lg bg-white/80 backdrop-blur-sm"
+                    className="w-full pl-6 pr-14 py-4 rounded-2xl border-0 ring-1 ring-line shadow-lg shadow-black/5 dark:shadow-black/40 focus:ring-2 focus:ring-scholarly-400 focus:shadow-scholarly-100/50 outline-none transition-all text-lg bg-panel/80 backdrop-blur-sm"
                     disabled={appState === AppState.SEARCHING}
                     />
                     <button 
                     type="submit" 
                     disabled={appState === AppState.SEARCHING}
-                    className="absolute right-2 top-2 bottom-2 bg-scholarly-600 text-white rounded-xl px-5 hover:bg-scholarly-700 transition-all disabled:bg-slate-300 disabled:shadow-none shadow-md shadow-scholarly-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center justify-center"
+                    className="absolute right-2 top-2 bottom-2 bg-scholarly-600 text-white rounded-xl px-5 hover:bg-scholarly-700 transition-all disabled:bg-line disabled:shadow-none shadow-md shadow-scholarly-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center justify-center"
                     >
                     {appState === AppState.SEARCHING ? (
                         <Activity className="w-5 h-5 animate-spin" />
@@ -625,13 +568,13 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                       value={sourceUrl}
                       onChange={(e) => setSourceUrl(e.target.value)}
                       placeholder="Paste a link — YouTube, Wikipedia, an article, a PDF..."
-                      className="w-full pl-6 pr-32 py-4 rounded-2xl border-0 ring-1 ring-slate-200 shadow-lg shadow-slate-200/40 focus:ring-2 focus:ring-scholarly-400 focus:shadow-scholarly-100/50 outline-none transition-all text-lg bg-white/80 backdrop-blur-sm"
+                      className="w-full pl-6 pr-32 py-4 rounded-2xl border-0 ring-1 ring-line shadow-lg shadow-black/5 dark:shadow-black/40 focus:ring-2 focus:ring-scholarly-400 focus:shadow-scholarly-100/50 outline-none transition-all text-lg bg-panel/80 backdrop-blur-sm"
                       disabled={appState === AppState.SEARCHING || uploading}
                     />
                     <button
                       type="submit"
                       disabled={appState === AppState.SEARCHING || uploading}
-                      className="absolute right-2 top-2 bottom-2 bg-scholarly-600 text-white rounded-xl px-5 hover:bg-scholarly-700 transition-all disabled:bg-slate-300 disabled:shadow-none shadow-md shadow-scholarly-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                      className="absolute right-2 top-2 bottom-2 bg-scholarly-600 text-white rounded-xl px-5 hover:bg-scholarly-700 transition-all disabled:bg-line disabled:shadow-none shadow-md shadow-scholarly-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
                     >
                       {appState === AppState.SEARCHING ? (
                         <Activity className="w-5 h-5 animate-spin" />
@@ -649,7 +592,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={uploading || appState === AppState.SEARCHING}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 font-semibold hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-panel border border-line text-ink font-semibold hover:bg-surface hover:border-line transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {uploading ? (
                         <>
@@ -661,7 +604,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                         </>
                       )}
                     </button>
-                    <span className="text-slate-500">
+                    <span className="text-muted">
                       PDF, text, audio or video — up to 50MB. It is read once and then searchable.
                     </span>
                     <input
@@ -680,13 +623,13 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                     value={manualPaperTitle}
                     onChange={(e) => setManualPaperTitle(e.target.value)}
                     placeholder="Enter specific paper title or topic to add..."
-                    className="w-full pl-6 pr-32 py-4 rounded-2xl border-0 ring-1 ring-slate-200 shadow-lg shadow-slate-200/40 focus:ring-2 focus:ring-scholarly-400 focus:shadow-scholarly-100/50 outline-none transition-all text-lg bg-white/80 backdrop-blur-sm"
+                    className="w-full pl-6 pr-32 py-4 rounded-2xl border-0 ring-1 ring-line shadow-lg shadow-black/5 dark:shadow-black/40 focus:ring-2 focus:ring-scholarly-400 focus:shadow-scholarly-100/50 outline-none transition-all text-lg bg-panel/80 backdrop-blur-sm"
                     disabled={appState === AppState.SEARCHING}
                     />
                     <button 
                     type="submit" 
                     disabled={appState === AppState.SEARCHING}
-                    className="absolute right-2 top-2 bottom-2 bg-scholarly-600 text-white rounded-xl px-5 hover:bg-scholarly-700 transition-all disabled:bg-slate-300 disabled:shadow-none shadow-md shadow-scholarly-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
+                    className="absolute right-2 top-2 bottom-2 bg-scholarly-600 text-white rounded-xl px-5 hover:bg-scholarly-700 transition-all disabled:bg-line disabled:shadow-none shadow-md shadow-scholarly-300 hover:shadow-lg hover:scale-105 active:scale-95 flex items-center justify-center gap-2"
                     >
                     {appState === AppState.SEARCHING ? (
                         <Activity className="w-5 h-5 animate-spin" />
@@ -704,7 +647,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
           {/* Scholar Stats */}
           {scholar && (
             <div className="mt-6 flex flex-wrap gap-3 animate-in fade-in slide-in-from-top-4 duration-500">
-               <div className="bg-white/60 backdrop-blur-sm px-4 py-2 rounded-lg border border-white/50 shadow-sm text-sm font-semibold text-slate-700 flex items-center gap-2">
+               <div className="bg-panel/60 backdrop-blur-sm px-4 py-2 rounded-lg border border-line/50 shadow-sm text-sm font-semibold text-ink flex items-center gap-2">
                   <span className="text-xl">🏛️</span> {scholar.affiliation || "Library Collection"}
                </div>
                {scholar.topics?.map(topic => (
@@ -712,10 +655,10 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                    #{topic}
                  </div>
                ))}
-               <div className="bg-purple-50/80 backdrop-blur-sm px-4 py-2 rounded-lg border border-purple-100 text-sm font-medium text-purple-700 flex items-center gap-2">
+               <div className="bg-purple-50 dark:bg-purple-500/15/80 backdrop-blur-sm px-4 py-2 rounded-lg border border-purple-100 text-sm font-medium text-purple-700 dark:text-purple-300 flex items-center gap-2">
                  📚 {scholar.papers.length} Papers
                </div>
-                <div className="bg-emerald-50/80 backdrop-blur-sm px-4 py-2 rounded-lg border border-emerald-100 text-sm font-medium text-emerald-700 flex items-center gap-2">
+                <div className="bg-emerald-50 dark:bg-emerald-500/15/80 backdrop-blur-sm px-4 py-2 rounded-lg border border-emerald-100 text-sm font-medium text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
                  <Save className="w-4 h-4" /> Auto-Saved
                </div>
             </div>
@@ -739,7 +682,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
 
         {/* Floating status: real batch progress while the pipeline runs */}
         {isAnyProcessing && (
-           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[min(92vw,26rem)] bg-slate-900/85 text-white px-5 py-4 rounded-2xl shadow-2xl backdrop-blur-md z-30 animate-in fade-in slide-in-from-bottom-8 border border-white/10">
+           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[min(92vw,26rem)] bg-slate-900/85 text-white px-5 py-4 rounded-2xl shadow-2xl backdrop-blur-md z-30 animate-in fade-in slide-in-from-bottom-8 border border-line/10">
              <div className="flex items-center gap-3">
                 <div className="relative flex items-center justify-center shrink-0">
                    <span className="absolute w-full h-full bg-scholarly-500 rounded-full animate-ping opacity-50"></span>
@@ -758,7 +701,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
              </div>
 
              {batchProgress && (
-               <div className="mt-3 h-1.5 w-full bg-white/15 rounded-full overflow-hidden">
+               <div className="mt-3 h-1.5 w-full bg-panel/15 rounded-full overflow-hidden">
                  <div
                    className="h-full bg-gradient-to-r from-scholarly-400 to-scholarly-200 rounded-full transition-all duration-500 ease-out"
                    style={{ width: `${Math.max(batchProgress.percent, 3)}%` }}
@@ -792,11 +735,11 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
 
       {/* Right Panel: Chat */}
       <div className={`
-        fixed md:static inset-y-0 right-0 z-40 bg-white/80 backdrop-blur-xl shadow-2xl md:shadow-none md:bg-transparent
-        transition-all duration-500 ease-in-out border-l border-white/20
+        fixed md:static inset-y-0 right-0 z-40 bg-panel/80 backdrop-blur-xl shadow-2xl md:shadow-none md:bg-transparent
+        transition-all duration-500 ease-in-out border-l border-line/20
         ${isChatOpen ? 'translate-x-0 w-full md:w-[420px] lg:w-[480px] opacity-100' : 'translate-x-full w-0 md:w-0 opacity-0 overflow-hidden'}
       `}>
-         <div className="w-full h-full min-w-[320px] bg-white/80 backdrop-blur-xl md:shadow-2xl">
+         <div className="w-full h-full min-w-[320px] bg-panel/80 backdrop-blur-xl md:shadow-2xl">
             <ChatInterface 
                 messages={chatMessages} 
                 onSendMessage={handleSendMessage}
@@ -815,7 +758,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
             className="fixed bottom-6 right-6 p-4 bg-scholarly-600 text-white rounded-full shadow-xl shadow-scholarly-300 hover:bg-scholarly-700 hover:scale-110 active:scale-95 transition-all z-50 animate-in zoom-in slide-in-from-bottom-4 duration-300 group"
          >
             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping"></div>
-            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></div>
+            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-line"></div>
             <MessageSquare className="w-6 h-6 group-hover:rotate-12 transition-transform" />
             <span className="sr-only">Open Chat</span>
          </button>

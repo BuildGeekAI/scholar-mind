@@ -1,6 +1,8 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './*.tsx', './components/**/*.tsx', './services/**/*.ts'],
+  // Light and dark are the only themes. The class goes on <html>.
+  darkMode: 'class',
   theme: {
     extend: {
       fontFamily: {
@@ -8,6 +10,15 @@ export default {
         serif: ['Merriweather', 'serif'],
       },
       colors: {
+        // Semantic surfaces and text, so a component says what a colour is for
+        // rather than which shade of slate it happens to be in light mode.
+        surface: 'rgb(var(--surface) / <alpha-value>)',
+        panel: 'rgb(var(--panel) / <alpha-value>)',
+        'panel-2': 'rgb(var(--panel-2) / <alpha-value>)',
+        ink: 'rgb(var(--ink) / <alpha-value>)',
+        muted: 'rgb(var(--ink-muted) / <alpha-value>)',
+        subtle: 'rgb(var(--ink-subtle) / <alpha-value>)',
+        line: 'rgb(var(--line) / <alpha-value>)',
         scholarly: {
           50: 'rgb(var(--primary-50) / <alpha-value>)',
           100: 'rgb(var(--primary-100) / <alpha-value>)',

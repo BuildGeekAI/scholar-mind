@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { Theme, applyTheme, readTheme } from './components/theme';
 import * as api from './services/api';
 import Dashboard from './components/Dashboard';
 import ProfileWorkspace from './components/ProfileWorkspace';
@@ -12,6 +13,10 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [theme, setTheme] = useState<Theme>(readTheme);
+
+  useEffect(() => { applyTheme(theme); }, [theme]);
+  const toggleTheme = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), []);
 
   const refresh = useCallback(async () => {
     try {
@@ -59,8 +64,7 @@ const App: React.FC = () => {
     try {
       const created = await api.createProfile(
         'Untitled profile',
-        EMOJIS[Math.floor(Math.random() * EMOJIS.length)],
-        'Ocean'
+        EMOJIS[Math.floor(Math.random() * EMOJIS.length)]
       );
       setProfiles(prev => [created, ...prev]);
       setActiveProfileId(created.id);
@@ -94,6 +98,8 @@ const App: React.FC = () => {
         profileId={activeProfileId}
         onBack={() => { setActiveProfileId(null); refresh(); }}
         onOpenProfile={(id: string) => { setActiveProfileId(id); refresh(); }}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onDelete={() => handleDeleteProfile(activeProfileId)}
       />
     );
@@ -101,7 +107,7 @@ const App: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="h-full w-full flex items-center justify-center bg-slate-50">
+      <div className="h-full w-full flex items-center justify-center bg-surface">
         <Loader2 className="w-6 h-6 text-scholarly-600 animate-spin" />
       </div>
     );
@@ -109,9 +115,9 @@ const App: React.FC = () => {
 
   if (error) {
     return (
-      <div className="h-full w-full flex flex-col items-center justify-center gap-4 bg-slate-50 text-center px-6">
-        <p className="text-slate-800 font-semibold">Could not reach the server.</p>
-        <p className="text-slate-500 text-sm max-w-md">{error}</p>
+      <div className="h-full w-full flex flex-col items-center justify-center gap-4 bg-surface text-center px-6">
+        <p className="text-ink font-semibold">Could not reach the server.</p>
+        <p className="text-muted text-sm max-w-md">{error}</p>
         <button onClick={refresh} className="px-4 py-2 rounded-lg bg-scholarly-600 text-white text-sm font-medium">
           Retry
         </button>
@@ -130,7 +136,7 @@ const App: React.FC = () => {
           <button
             onClick={handleImportLegacy}
             disabled={importing}
-            className="px-3 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 font-medium disabled:opacity-60 shrink-0"
+            className="px-3 py-1.5 rounded-lg bg-panel/20 hover:bg-panel/30 font-medium disabled:opacity-60 shrink-0"
           >
             {importing ? 'Importing…' : 'Import now'}
           </button>
@@ -139,6 +145,8 @@ const App: React.FC = () => {
       <Dashboard
         profiles={profiles}
         onCreateProfile={handleCreateProfile}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onSelectProfile={setActiveProfileId}
         onDeleteProfile={(id, e) => {
           if (window.confirm('Are you sure you want to delete this profile?')) {

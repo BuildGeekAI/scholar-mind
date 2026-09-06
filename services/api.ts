@@ -42,8 +42,8 @@ const send = (path: string, method: string, body?: unknown) =>
 // --- Profiles ---------------------------------------------------------------
 export const listProfiles = (): Promise<ProfileRecord[]> => send('/profiles', 'GET');
 
-export const createProfile = (title: string, emoji: string, theme: string): Promise<ProfileRecord> =>
-  send('/profiles', 'POST', { title, emoji, theme });
+export const createProfile = (title: string, emoji: string): Promise<ProfileRecord> =>
+  send('/profiles', 'POST', { title, emoji });
 
 export const getProfile = (
   id: string

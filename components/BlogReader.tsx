@@ -47,14 +47,14 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
 
   // Memoized Markdown Components for performance
   const markdownComponents = useMemo(() => ({
-    h1: ({node, ...props}: any) => <h2 className="text-2xl font-sans font-bold mt-8 mb-4 text-slate-900 leading-tight" {...props} />,
-    h2: ({node, ...props}: any) => <h3 className="text-xl font-sans font-bold mt-8 mb-4 text-slate-900 leading-tight" {...props} />,
-    h3: ({node, ...props}: any) => <h4 className="text-lg font-sans font-bold mt-6 mb-2 text-slate-800 leading-tight" {...props} />,
-    p: ({node, ...props}: any) => <p className="mb-6 leading-relaxed text-slate-700" {...props} />,
-    ul: ({node, ...props}: any) => <ul className="list-disc list-outside ml-6 mb-6 space-y-2 text-slate-700 marker:text-scholarly-400" {...props} />,
-    ol: ({node, ...props}: any) => <ol className="list-decimal list-outside ml-6 mb-6 space-y-2 text-slate-700 marker:text-scholarly-400 font-medium" {...props} />,
+    h1: ({node, ...props}: any) => <h2 className="text-2xl font-sans font-bold mt-8 mb-4 text-ink leading-tight" {...props} />,
+    h2: ({node, ...props}: any) => <h3 className="text-xl font-sans font-bold mt-8 mb-4 text-ink leading-tight" {...props} />,
+    h3: ({node, ...props}: any) => <h4 className="text-lg font-sans font-bold mt-6 mb-2 text-ink leading-tight" {...props} />,
+    p: ({node, ...props}: any) => <p className="mb-6 leading-relaxed text-ink" {...props} />,
+    ul: ({node, ...props}: any) => <ul className="list-disc list-outside ml-6 mb-6 space-y-2 text-ink marker:text-scholarly-400" {...props} />,
+    ol: ({node, ...props}: any) => <ol className="list-decimal list-outside ml-6 mb-6 space-y-2 text-ink marker:text-scholarly-400 font-medium" {...props} />,
     blockquote: ({node, ...props}: any) => (
-      <blockquote className="border-l-4 border-scholarly-500 pl-6 py-4 my-8 italic text-slate-700 bg-scholarly-50/30 rounded-r-xl shadow-sm" {...props} />
+      <blockquote className="border-l-4 border-scholarly-500 pl-6 py-4 my-8 italic text-ink bg-scholarly-50/30 rounded-r-xl shadow-sm" {...props} />
     ),
     pre: ({node, ...props}: any) => (
       <pre className="bg-slate-900 text-slate-100 p-5 rounded-xl overflow-x-auto my-8 text-sm font-mono shadow-lg border border-slate-800 custom-scrollbar" {...props} />
@@ -62,7 +62,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
     code: ({node, inline, className, children, ...props}: any) => {
       if (inline) {
         return (
-          <code className="font-mono text-[0.9em] bg-slate-100 text-pink-600 px-1.5 py-0.5 rounded border border-slate-200" {...props}>
+          <code className="font-mono text-[0.9em] bg-panel-2 text-pink-600 px-1.5 py-0.5 rounded border border-line" {...props}>
             {children}
           </code>
         );
@@ -75,17 +75,17 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
         <a className="text-scholarly-600 hover:text-scholarly-800 underline underline-offset-2 transition-colors font-medium" {...props} />
     ),
     img: ({node, ...props}: any) => (
-        <img className="rounded-xl shadow-md my-8 w-full object-cover max-h-[500px] border border-slate-100" {...props} />
+        <img className="rounded-xl shadow-md my-8 w-full object-cover max-h-[500px] border border-line" {...props} />
     ),
-    hr: ({node, ...props}: any) => <hr className="my-8 border-slate-200" {...props} />,
+    hr: ({node, ...props}: any) => <hr className="my-8 border-line" {...props} />,
     table: ({node, ...props}: any) => (
-        <div className="overflow-x-auto my-8 rounded-xl border border-slate-200 shadow-sm">
-            <table className="w-full text-left text-sm text-slate-600" {...props} />
+        <div className="overflow-x-auto my-8 rounded-xl border border-line shadow-sm">
+            <table className="w-full text-left text-sm text-muted" {...props} />
         </div>
     ),
-    thead: ({node, ...props}: any) => <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200" {...props} />,
+    thead: ({node, ...props}: any) => <thead className="bg-surface text-ink font-semibold border-b border-line" {...props} />,
     th: ({node, ...props}: any) => <th className="px-6 py-3 whitespace-nowrap" {...props} />,
-    td: ({node, ...props}: any) => <td className="px-6 py-4 border-b border-slate-100 last:border-0" {...props} />,
+    td: ({node, ...props}: any) => <td className="px-6 py-4 border-b border-line last:border-0" {...props} />,
   }), []);
 
   if (!paper) return null;
@@ -285,12 +285,12 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
         onClick={onClose}
       />
       
-      <div className="relative bg-white w-full max-w-4xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative bg-panel w-full max-w-4xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
-        <div className="flex flex-col border-b border-slate-100 bg-white z-10 shrink-0">
+        <div className="flex flex-col border-b border-line bg-panel z-10 shrink-0">
           <div className="flex items-center justify-between px-6 py-4">
              <div>
-                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Research Viewer</h3>
+                <h3 className="text-sm font-bold text-subtle uppercase tracking-wider">Research Viewer</h3>
              </div>
              <div className="flex items-center gap-2">
                {paper.audioKey && !isConversationalMode && (
@@ -298,7 +298,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                   onClick={handlePlayAudio}
                   className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors mr-2 ${
                     isPlaying 
-                        ? 'text-red-700 bg-red-100 hover:bg-red-200' 
+                        ? 'text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-500/20 hover:bg-red-200' 
                         : 'text-scholarly-700 bg-scholarly-50 hover:bg-scholarly-100'
                   }`}
                  >
@@ -315,7 +315,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                )}
                <button 
                  onClick={onClose}
-                 className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors ml-2"
+                 className="p-2 text-subtle hover:text-red-500 dark:text-red-300 hover:bg-red-50 dark:bg-red-500/15 rounded-full transition-colors ml-2"
                >
                  <X className="w-6 h-6" />
                </button>
@@ -326,25 +326,25 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
           <div className="flex px-6 gap-6 overflow-x-auto scrollbar-hide">
             <button 
               onClick={() => { setActiveTab('blog'); setIsConversationalMode(false); stopAudio(); }}
-              className={`pb-3 text-sm font-semibold flex items-center gap-2 transition-all border-b-2 whitespace-nowrap ${activeTab === 'blog' ? 'border-scholarly-600 text-scholarly-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+              className={`pb-3 text-sm font-semibold flex items-center gap-2 transition-all border-b-2 whitespace-nowrap ${activeTab === 'blog' ? 'border-scholarly-600 text-scholarly-600' : 'border-transparent text-muted hover:text-ink'}`}
             >
               <FileText className="w-4 h-4" /> Article
             </button>
             <button 
               onClick={() => { setActiveTab('slides'); setIsConversationalMode(false); stopAudio(); }}
-              className={`pb-3 text-sm font-semibold flex items-center gap-2 transition-all border-b-2 whitespace-nowrap ${activeTab === 'slides' ? 'border-scholarly-600 text-scholarly-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+              className={`pb-3 text-sm font-semibold flex items-center gap-2 transition-all border-b-2 whitespace-nowrap ${activeTab === 'slides' ? 'border-scholarly-600 text-scholarly-600' : 'border-transparent text-muted hover:text-ink'}`}
             >
               <MonitorPlay className="w-4 h-4" /> Slides
             </button>
             <button 
               onClick={() => setActiveTab('quiz')}
-              className={`pb-3 text-sm font-semibold flex items-center gap-2 transition-all border-b-2 whitespace-nowrap ${activeTab === 'quiz' ? 'border-scholarly-600 text-scholarly-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+              className={`pb-3 text-sm font-semibold flex items-center gap-2 transition-all border-b-2 whitespace-nowrap ${activeTab === 'quiz' ? 'border-scholarly-600 text-scholarly-600' : 'border-transparent text-muted hover:text-ink'}`}
             >
               <BrainCircuit className="w-4 h-4" /> Quiz ({paper.quiz?.length || 0})
             </button>
              <button 
               onClick={() => { setActiveTab('flashcards'); setIsConversationalMode(false); stopAudio(); }}
-              className={`pb-3 text-sm font-semibold flex items-center gap-2 transition-all border-b-2 whitespace-nowrap ${activeTab === 'flashcards' ? 'border-scholarly-600 text-scholarly-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+              className={`pb-3 text-sm font-semibold flex items-center gap-2 transition-all border-b-2 whitespace-nowrap ${activeTab === 'flashcards' ? 'border-scholarly-600 text-scholarly-600' : 'border-transparent text-muted hover:text-ink'}`}
             >
               <Layers className="w-4 h-4" /> Flashcards ({paper.flashCards?.length || 0})
             </button>
@@ -352,14 +352,14 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto bg-slate-50/50">
+        <div className="flex-1 overflow-y-auto bg-surface/50">
           
           {/* BLOG TAB */}
           {activeTab === 'blog' && (
             <div className="p-0">
                {/* Hero Illustration */}
                {paper.illustrationKey && (
-                 <div className="w-full h-64 sm:h-80 bg-slate-200 overflow-hidden relative">
+                 <div className="w-full h-64 sm:h-80 bg-line overflow-hidden relative">
                     <img 
                       src={blobUrl(paper.illustrationKey)} 
                       alt="Scientific Illustration" 
@@ -367,7 +367,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent"></div>
                     <div className="absolute bottom-6 left-8 right-8 text-white">
-                       <span className="text-xs font-bold uppercase tracking-widest bg-white/20 backdrop-blur-md px-2 py-1 rounded-md mb-2 inline-block">Research Insight</span>
+                       <span className="text-xs font-bold uppercase tracking-widest bg-panel/20 backdrop-blur-md px-2 py-1 rounded-md mb-2 inline-block">Research Insight</span>
                        <h1 className="font-serif text-2xl sm:text-4xl font-bold leading-tight shadow-sm text-shadow">
                           {paper.blogTitle || paper.title}
                        </h1>
@@ -377,23 +377,23 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
 
               <div className="p-8 sm:p-12 prose prose-slate max-w-none">
                 {!paper.illustrationKey && paper.blogTitle && (
-                  <h1 className="font-serif text-3xl sm:text-4xl text-slate-900 mb-6 font-bold leading-tight">
+                  <h1 className="font-serif text-3xl sm:text-4xl text-ink mb-6 font-bold leading-tight">
                     {paper.blogTitle}
                   </h1>
                 )}
                 
-                <div className="bg-white border border-slate-200 p-5 rounded-lg shadow-sm mb-6 flex justify-between items-start gap-4">
+                <div className="bg-panel border border-line p-5 rounded-lg shadow-sm mb-6 flex justify-between items-start gap-4">
                   <div className="flex-1">
-                    <span className="font-semibold block text-slate-900 mb-1 text-base">Original Paper</span> 
-                    <p className="text-sm text-slate-600 m-0 leading-relaxed">
+                    <span className="font-semibold block text-ink mb-1 text-base">Original Paper</span> 
+                    <p className="text-sm text-muted m-0 leading-relaxed">
                         {paper.title} ({paper.year})
                     </p>
-                    <span className="text-slate-500 text-xs mt-1 block font-medium">By {paper.authors.join(", ")}</span>
+                    <span className="text-muted text-xs mt-1 block font-medium">By {paper.authors.join(", ")}</span>
                   </div>
                   <div className="flex gap-2">
                     <button 
                       onClick={handleDownloadSummary}
-                      className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-all shrink-0"
+                      className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-ink bg-surface hover:bg-panel-2 border border-line rounded-lg transition-all shrink-0"
                       title="Download Summary"
                     >
                       <Download className="w-4 h-4" /> Save
@@ -415,33 +415,33 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                        <Calendar className="w-5 h-5" />
                      </div>
                      <div>
-                       <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Published</p>
-                       <p className="text-base font-bold text-slate-800">{paper.year}</p>
+                       <p className="text-xs font-bold text-muted uppercase tracking-wide">Published</p>
+                       <p className="text-base font-bold text-ink">{paper.year}</p>
                      </div>
                   </div>
                   
-                  <div className="flex items-center gap-3 p-4 bg-purple-50/50 rounded-xl border border-purple-100 hover:border-purple-200 transition-colors">
-                     <div className="p-2.5 bg-purple-100 text-purple-600 rounded-lg shrink-0">
+                  <div className="flex items-center gap-3 p-4 bg-purple-50 dark:bg-purple-500/15/50 rounded-xl border border-purple-100 hover:border-purple-200 transition-colors">
+                     <div className="p-2.5 bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-300 rounded-lg shrink-0">
                        <Quote className="w-5 h-5" />
                      </div>
                      <div>
-                       <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Citations</p>
-                       <p className="text-base font-bold text-slate-800">{paper.citationCount || 'N/A'}</p>
+                       <p className="text-xs font-bold text-muted uppercase tracking-wide">Citations</p>
+                       <p className="text-base font-bold text-ink">{paper.citationCount || 'N/A'}</p>
                      </div>
                   </div>
 
-                  <div className="flex items-center gap-3 p-4 bg-amber-50/50 rounded-xl border border-amber-100 hover:border-amber-200 transition-colors">
+                  <div className="flex items-center gap-3 p-4 bg-amber-50 dark:bg-amber-500/15/50 rounded-xl border border-amber-100 hover:border-amber-200 transition-colors">
                      <div className="p-2.5 bg-amber-100 text-amber-600 rounded-lg shrink-0">
                        <Clock className="w-5 h-5" />
                      </div>
                      <div>
-                       <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Read Time</p>
-                       <p className="text-base font-bold text-slate-800">~{Math.ceil((paper.blogContent?.split(/\s+/).length || 0) / 200)} min</p>
+                       <p className="text-xs font-bold text-muted uppercase tracking-wide">Read Time</p>
+                       <p className="text-base font-bold text-ink">~{Math.ceil((paper.blogContent?.split(/\s+/).length || 0) / 200)} min</p>
                      </div>
                   </div>
                 </div>
 
-                <div className="font-serif text-lg leading-relaxed text-slate-800">
+                <div className="font-serif text-lg leading-relaxed text-ink">
                   <ReactMarkdown components={markdownComponents}>
                     {paper.blogContent || ""}
                   </ReactMarkdown>
@@ -454,21 +454,21 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
           {activeTab === 'slides' && (
              <div className="p-8 sm:p-12 space-y-8 max-w-4xl mx-auto">
                <div className="text-center mb-8">
-                  <h2 className="text-2xl font-bold text-slate-800">{paper.title}</h2>
-                  <p className="text-slate-500">{paper.authors.join(", ")} • {paper.year}</p>
+                  <h2 className="text-2xl font-bold text-ink">{paper.title}</h2>
+                  <p className="text-muted">{paper.authors.join(", ")} • {paper.year}</p>
                </div>
                
                {paper.slides && paper.slides.length > 0 ? (
                  paper.slides.map((slide, idx) => (
-                   <div key={idx} className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 aspect-[16/9] flex flex-col">
-                      <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-4">
+                   <div key={idx} className="bg-panel p-8 rounded-2xl shadow-sm border border-line aspect-[16/9] flex flex-col">
+                      <div className="flex items-center justify-between mb-6 border-b border-line pb-4">
                         <h3 className="text-xl font-bold text-scholarly-700">{slide.title}</h3>
-                        <span className="text-slate-300 font-mono text-xl">{String(idx + 1).padStart(2, '0')}</span>
+                        <span className="text-subtle font-mono text-xl">{String(idx + 1).padStart(2, '0')}</span>
                       </div>
                       <div className="flex-1 flex flex-col justify-center">
                         <ul className="space-y-4">
                           {slide.points.map((point, pIdx) => (
-                            <li key={pIdx} className="flex items-start gap-3 text-lg text-slate-700">
+                            <li key={pIdx} className="flex items-start gap-3 text-lg text-ink">
                               <span className="w-2 h-2 rounded-full bg-scholarly-400 mt-2.5 shrink-0"></span>
                               {point}
                             </li>
@@ -478,7 +478,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                    </div>
                  ))
                ) : (
-                 <div className="flex items-center justify-center h-64 text-slate-400">
+                 <div className="flex items-center justify-center h-64 text-subtle">
                    <p>No slides generated for this paper.</p>
                  </div>
                )}
@@ -490,7 +490,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
              <div className="p-8 sm:p-12 flex flex-col items-center justify-center min-h-[500px]">
                 
                 {/* Conversational Mode Toggle & Voice Selection */}
-                <div className="mb-8 flex flex-wrap items-center justify-center gap-4 bg-white p-3 rounded-2xl shadow-sm border border-slate-100">
+                <div className="mb-8 flex flex-wrap items-center justify-center gap-4 bg-panel p-3 rounded-2xl shadow-sm border border-line">
                     <button
                         onClick={() => {
                             if (!isConversationalMode) {
@@ -504,17 +504,17 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
                             isConversationalMode 
                                 ? 'bg-purple-600 text-white shadow-md shadow-purple-200 ring-2 ring-purple-100' 
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                : 'bg-panel-2 text-muted hover:bg-line'
                         }`}
                     >
                         {isConversationalMode ? <Volume2 className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                         {isConversationalMode ? 'Conversational Mode ON' : 'Start Conversational Quiz'}
                     </button>
                     
-                    <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+                    <div className="h-6 w-px bg-line hidden sm:block"></div>
 
                     <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-slate-400 uppercase tracking-wide">Host Voice:</span>
+                        <span className="text-xs font-medium text-subtle uppercase tracking-wide">Host Voice:</span>
                         <select 
                             value={selectedVoice}
                             onChange={(e) => {
@@ -526,7 +526,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                                     setHostStatus('idle');
                                 }
                             }}
-                            className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg focus:ring-purple-500 focus:border-purple-500 block p-2 outline-none cursor-pointer hover:bg-white transition-colors"
+                            className="bg-surface border border-line text-ink text-sm rounded-lg focus:ring-purple-500 focus:border-purple-500 block p-2 outline-none cursor-pointer hover:bg-panel transition-colors"
                         >
                             {VOICES.map(v => (
                                 <option key={v} value={v}>{v}</option>
@@ -535,7 +535,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                     </div>
                 </div>
 
-                <div className={`w-full max-w-2xl bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden transition-all duration-500 ${isConversationalMode ? 'ring-4 ring-purple-100' : ''}`}>
+                <div className={`w-full max-w-2xl bg-panel rounded-2xl shadow-lg border border-line overflow-hidden transition-all duration-500 ${isConversationalMode ? 'ring-4 ring-purple-100' : ''}`}>
                     <div className={`p-6 text-white flex justify-between items-center transition-colors duration-500 ${isConversationalMode ? 'bg-purple-900' : 'bg-slate-900'}`}>
                        <div className="flex items-center gap-3">
                            {isConversationalMode && (
@@ -552,33 +552,33 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                     
                     {/* Visualizer for Conversational Mode */}
                     {isConversationalMode && hostStatus === 'speaking' && (
-                        <div className="h-16 bg-purple-50 w-full flex items-center justify-center gap-1 border-b border-purple-100">
+                        <div className="h-16 bg-purple-50 dark:bg-purple-500/15 w-full flex items-center justify-center gap-1 border-b border-purple-100">
                              {[...Array(5)].map((_, i) => (
                                  <div key={i} className="w-1 bg-purple-500 rounded-full animate-[bounce_1s_infinite]" style={{ height: '50%', animationDelay: `${i * 0.1}s` }}></div>
                              ))}
-                             <span className="ml-3 text-xs font-bold text-purple-600 uppercase tracking-wider">{selectedVoice} is speaking...</span>
+                             <span className="ml-3 text-xs font-bold text-purple-600 dark:text-purple-300 uppercase tracking-wider">{selectedVoice} is speaking...</span>
                         </div>
                     )}
 
                     <div className="p-8">
-                       <h4 className="text-xl font-semibold text-slate-800 mb-8 leading-relaxed">
+                       <h4 className="text-xl font-semibold text-ink mb-8 leading-relaxed">
                           {paper.quiz[currentQuestionIndex].question}
                        </h4>
 
                        <div className="space-y-3">
                          {paper.quiz[currentQuestionIndex].options.map((option, idx) => {
-                            let optionClass = "w-full text-left p-4 rounded-xl border transition-all text-slate-700 font-medium ";
+                            let optionClass = "w-full text-left p-4 rounded-xl border transition-all text-ink font-medium ";
                             
                             if (isAnswered) {
                                if (idx === paper.quiz![currentQuestionIndex].correctAnswer) {
-                                  optionClass += "bg-green-100 border-green-500 text-green-800";
+                                  optionClass += "bg-green-100 dark:bg-green-500/20 border-green-500 text-green-800";
                                } else if (idx === selectedAnswer) {
-                                  optionClass += "bg-red-100 border-red-500 text-red-800";
+                                  optionClass += "bg-red-100 dark:bg-red-500/20 border-red-500 text-red-800";
                                } else {
-                                  optionClass += "bg-slate-50 border-slate-200 opacity-60";
+                                  optionClass += "bg-surface border-line opacity-60";
                                }
                             } else {
-                               optionClass += "bg-white border-slate-200 hover:border-scholarly-400 hover:bg-scholarly-50";
+                               optionClass += "bg-panel border-line hover:border-scholarly-400 hover:bg-scholarly-50";
                             }
 
                             return (
@@ -591,7 +591,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                                   <div className="flex items-center justify-between">
                                      <span>{option}</span>
                                      {isAnswered && idx === paper.quiz![currentQuestionIndex].correctAnswer && (
-                                        <Check className="w-5 h-5 text-green-600" />
+                                        <Check className="w-5 h-5 text-green-600 dark:text-green-300" />
                                      )}
                                   </div>
                                </button>
@@ -607,8 +607,8 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                        )}
                     </div>
                     
-                    <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
-                       <div className="text-sm font-medium text-slate-500">
+                    <div className="p-6 border-t border-line bg-surface flex justify-between items-center">
+                       <div className="text-sm font-medium text-muted">
                           Current Score: <span className="text-scholarly-600 font-bold">{score}</span>
                        </div>
                        <button 
@@ -634,14 +634,14 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                    >
                       {/* Front */}
                       <div 
-                          className="absolute inset-0 w-full h-full bg-white rounded-2xl shadow-xl border border-slate-200 p-8 flex flex-col items-center justify-center text-center backface-hidden"
+                          className="absolute inset-0 w-full h-full bg-panel rounded-2xl shadow-xl border border-line p-8 flex flex-col items-center justify-center text-center backface-hidden"
                           style={{ backfaceVisibility: 'hidden' }}
                       >
-                          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Term</span>
-                          <h3 className="text-3xl font-serif font-bold text-slate-800">
+                          <span className="text-xs font-bold text-subtle uppercase tracking-widest mb-4">Term</span>
+                          <h3 className="text-3xl font-serif font-bold text-ink">
                               {paper.flashCards[currentCardIndex].front}
                           </h3>
-                          <p className="absolute bottom-6 text-xs text-slate-400 flex items-center gap-1">
+                          <p className="absolute bottom-6 text-xs text-subtle flex items-center gap-1">
                              <RotateCw className="w-3 h-3" /> Click to flip
                           </p>
                       </div>
@@ -651,7 +651,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                           className="absolute inset-0 w-full h-full bg-slate-900 rounded-2xl shadow-xl p-8 flex flex-col items-center justify-center text-center backface-hidden"
                           style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
                       >
-                          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Definition</span>
+                          <span className="text-xs font-bold text-subtle uppercase tracking-widest mb-4">Definition</span>
                           <p className="text-xl text-white font-medium leading-relaxed">
                               {paper.flashCards[currentCardIndex].back}
                           </p>
@@ -662,16 +662,16 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                    <div className="flex justify-between items-center mt-8">
                       <button 
                         onClick={prevCard}
-                        className="p-3 rounded-full bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-scholarly-600 transition-colors shadow-sm"
+                        className="p-3 rounded-full bg-panel border border-line text-muted hover:bg-surface hover:text-scholarly-600 transition-colors shadow-sm"
                       >
                          <ChevronLeft className="w-6 h-6" />
                       </button>
-                      <span className="text-slate-500 font-mono text-sm">
+                      <span className="text-muted font-mono text-sm">
                          {currentCardIndex + 1} / {paper.flashCards.length}
                       </span>
                       <button 
                         onClick={nextCard}
-                        className="p-3 rounded-full bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-scholarly-600 transition-colors shadow-sm"
+                        className="p-3 rounded-full bg-panel border border-line text-muted hover:bg-surface hover:text-scholarly-600 transition-colors shadow-sm"
                       >
                          <ChevronRight className="w-6 h-6" />
                       </button>
@@ -682,20 +682,20 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
 
           {/* Empty States */}
           {activeTab === 'quiz' && (!paper.quiz || paper.quiz.length === 0) && (
-              <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+              <div className="flex flex-col items-center justify-center h-64 text-subtle">
                 <BrainCircuit className="w-12 h-12 mb-4 opacity-30" />
                 <p>No quiz questions generated for this paper.</p>
               </div>
           )}
            {activeTab === 'flashcards' && (!paper.flashCards || paper.flashCards.length === 0) && (
-              <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+              <div className="flex flex-col items-center justify-center h-64 text-subtle">
                 <Layers className="w-12 h-12 mb-4 opacity-30" />
                 <p>No flashcards generated for this paper.</p>
               </div>
           )}
           
-          <div className="p-8 text-center border-t border-slate-100 bg-white">
-            <p className="text-slate-400 text-sm italic">
+          <div className="p-8 text-center border-t border-line bg-panel">
+            <p className="text-subtle text-sm italic">
               Generated by ScholarMind AI
             </p>
           </div>
@@ -705,24 +705,24 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
       {/* Citation Modal */}
       {showCitationModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setShowCitationModal(false)}>
-           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-                 <h3 className="font-bold text-slate-800 text-lg">Cite this paper</h3>
-                 <button onClick={() => setShowCitationModal(false)} className="text-slate-400 hover:text-slate-600 transition-colors">
+           <div className="bg-panel rounded-xl shadow-2xl w-full max-w-lg overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-6 py-4 border-b border-line">
+                 <h3 className="font-bold text-ink text-lg">Cite this paper</h3>
+                 <button onClick={() => setShowCitationModal(false)} className="text-subtle hover:text-ink transition-colors">
                     <X className="w-5 h-5" />
                  </button>
               </div>
               
               <div className="p-6">
-                 <p className="text-sm text-slate-600 mb-3 font-medium">BibTeX Format</p>
-                 <div className="bg-slate-900 text-slate-300 p-4 rounded-xl font-mono text-xs overflow-x-auto mb-6 shadow-inner border border-slate-800">
+                 <p className="text-sm text-muted mb-3 font-medium">BibTeX Format</p>
+                 <div className="bg-slate-900 text-subtle p-4 rounded-xl font-mono text-xs overflow-x-auto mb-6 shadow-inner border border-slate-800">
                     <pre className="whitespace-pre-wrap break-all">{getBibTeX()}</pre>
                  </div>
                  
                  <div className="flex gap-3 justify-end">
                     <button 
                       onClick={() => setShowCitationModal(false)}
-                      className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg text-sm font-medium transition-colors"
+                      className="px-4 py-2 text-muted hover:bg-panel-2 rounded-lg text-sm font-medium transition-colors"
                     >
                        Cancel
                     </button>
