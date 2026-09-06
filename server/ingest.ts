@@ -16,7 +16,8 @@ const acquirePdf = async (
   profileId: string,
   paper: Paper,
   blobs: BlobStore,
-  storeName?: string
+  storeName: string | undefined,
+  setStage: (stage: Paper['stage']) => Promise<void>
 ): Promise<Partial<Paper>> => {
   const source = await resolvePaperSource(paper);
   if (!source.pdfUrl) {
@@ -25,6 +26,7 @@ const acquirePdf = async (
 
   const patch: Partial<Paper> = { pdfStatus: 'found', sourceUrl: source.pdfUrl };
 
+  await setStage('fetching');
   const bytes = await fetchPdf(source.pdfUrl);
   if (!bytes) return patch;
 
@@ -34,6 +36,7 @@ const acquirePdf = async (
   patch.pdfStatus = 'fetched';
 
   if (storeName) {
+    await setStage('indexing');
     const docName = await indexDocument(storeName, bytes, 'application/pdf', paper.title, {
       paperId: paper.id,
       title: paper.title,
@@ -52,7 +55,7 @@ export const processPaper = async (
   storeName: string | undefined,
   onProgress?: ProgressFn
 ): Promise<Paper> => {
-  let current: Paper = { ...paper, status: 'downloading', pdfStatus: 'pending' };
+  let current: Paper = { ...paper, status: 'downloading', pdfStatus: 'pending', stage: 'resolving' };
   const save = async () => {
     await repo.upsertPaper(profileId, current);
     try {
@@ -63,10 +66,19 @@ export const processPaper = async (
     }
   };
 
+  const setStage = async (stage: Paper['stage']) => {
+    current = { ...current, stage };
+    await save();
+  };
+
   try {
     await save();
-    current = { ...current, ...(await acquirePdf(profileId, paper, blobs, storeName)) };
+    current = {
+      ...current,
+      ...(await acquirePdf(profileId, paper, blobs, storeName, setStage)),
+    };
     current.status = 'processing';
+    current.stage = 'writing';
     await save();
 
     const resources = await generatePaperResources(current, {
@@ -74,6 +86,9 @@ export const processPaper = async (
       sourceUrl: current.sourceUrl,
     });
     current = { ...current, ...resources };
+    await save();
+
+    current.stage = 'media';
     await save();
 
     const [audio, illustration] = await Promise.all([
@@ -118,10 +133,12 @@ export const processPaper = async (
     }
 
     current.status = 'converted';
+    current.stage = undefined;
     await save();
   } catch (error) {
     console.error(`Error processing paper ${current.title}:`, error);
     current.status = 'error';
+    current.stage = undefined;
     await save();
   }
   return current;

@@ -67,6 +67,9 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   // Selection State
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(new Set());
 
+  // Ids in the current generation batch, so overall progress can be reported.
+  const [batchIds, setBatchIds] = useState<string[]>([]);
+
   // Load everything for this profile from the server.
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +139,13 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     () => papers.some(p => p.status === 'downloading' || p.status === 'processing'),
     [papers]
   );
+
+  const batchProgress = useMemo(() => {
+    if (!batchIds.length) return null;
+    const inBatch = papers.filter(p => batchIds.includes(p.id));
+    const settled = inBatch.filter(p => p.status === 'converted' || p.status === 'error').length;
+    return { done: settled, total: batchIds.length, percent: (settled / batchIds.length) * 100 };
+  }, [papers, batchIds]);
 
   const mergePaper = useCallback((incoming: Paper) => {
     setPapers(prev => {
@@ -211,11 +221,14 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   /** The server owns the pipeline; this only streams progress back into state. */
   const runPipeline = useCallback(async (ids: string[]) => {
     if (!profile || !ids.length) return;
+    setBatchIds(ids);
     try {
       await api.processPapers(profile.id, ids, mergePaper, undefined, message => alert(message));
     } catch (error: any) {
       console.error(error);
       alert(error.message || 'Processing failed.');
+    } finally {
+      setBatchIds([]);
     }
   }, [profile, mergePaper]);
 
@@ -540,14 +553,55 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
           />
         </div>
 
-        {/* Floating status (Processing) */}
+        {/* Floating status: real batch progress while the pipeline runs */}
         {isAnyProcessing && (
-           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-900/80 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 text-sm backdrop-blur-md z-30 animate-in fade-in slide-in-from-bottom-8 border border-white/10">
-             <div className="relative flex items-center justify-center">
-                <span className="absolute w-full h-full bg-scholarly-500 rounded-full animate-ping opacity-50"></span>
-                <Activity className="relative w-4 h-4 text-scholarly-400" />
+           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-[min(92vw,26rem)] bg-slate-900/85 text-white px-5 py-4 rounded-2xl shadow-2xl backdrop-blur-md z-30 animate-in fade-in slide-in-from-bottom-8 border border-white/10">
+             <div className="flex items-center gap-3">
+                <div className="relative flex items-center justify-center shrink-0">
+                   <span className="absolute w-full h-full bg-scholarly-500 rounded-full animate-ping opacity-50"></span>
+                   <Activity className="relative w-4 h-4 text-scholarly-400" />
+                </div>
+                <span className="font-medium tracking-wide text-sm flex-1 min-w-0">
+                  {batchProgress
+                    ? `Processing ${batchProgress.done} of ${batchProgress.total} papers`
+                    : 'Generating assets…'}
+                </span>
+                {batchProgress && (
+                  <span className="text-xs font-mono text-scholarly-300 tabular-nums shrink-0">
+                    {Math.round(batchProgress.percent)}%
+                  </span>
+                )}
              </div>
-             <span className="font-medium tracking-wide">Generating Assets (Async)...</span>
+
+             {batchProgress && (
+               <div className="mt-3 h-1.5 w-full bg-white/15 rounded-full overflow-hidden">
+                 <div
+                   className="h-full bg-gradient-to-r from-scholarly-400 to-scholarly-200 rounded-full transition-all duration-500 ease-out"
+                   style={{ width: `${Math.max(batchProgress.percent, 3)}%` }}
+                 />
+               </div>
+             )}
+
+             {/* What each in-flight paper is doing right now. */}
+             <div className="mt-3 space-y-1.5 max-h-24 overflow-y-auto">
+               {papers
+                 .filter(p => p.status === 'downloading' || p.status === 'processing')
+                 .slice(0, 3)
+                 .map(p => (
+                   <div key={p.id} className="flex items-center gap-2 text-xs text-white/70">
+                     <Loader2 className="w-3 h-3 animate-spin shrink-0 text-scholarly-300" />
+                     <span className="truncate flex-1">{p.title}</span>
+                     <span className="text-white/50 shrink-0">
+                       {p.stage === 'resolving' ? 'finding'
+                         : p.stage === 'fetching' ? 'downloading'
+                         : p.stage === 'indexing' ? 'indexing'
+                         : p.stage === 'writing' ? 'writing'
+                         : p.stage === 'media' ? 'audio & art'
+                         : 'working'}
+                     </span>
+                   </div>
+                 ))}
+             </div>
            </div>
         )}
       </div>

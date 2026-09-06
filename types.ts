@@ -40,6 +40,8 @@ export interface Paper {
   pdfKey?: string;
   sourceUrl?: string;
   pdfStatus?: 'pending' | 'found' | 'fetched' | 'unavailable' | 'error';
+  /** Current pipeline step while processing; cleared when the paper settles. */
+  stage?: 'resolving' | 'fetching' | 'indexing' | 'writing' | 'media';
   fileSearchDocName?: string;
 }
 

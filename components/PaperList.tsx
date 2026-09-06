@@ -14,6 +14,21 @@ interface PaperListProps {
   onFetchCitations: (paper: Paper) => void;
 }
 
+/** Where each pipeline step sits on the card's progress bar. */
+const STAGES: Record<string, { label: string; percent: number }> = {
+  resolving: { label: 'Finding the paper', percent: 12 },
+  fetching:  { label: 'Downloading PDF',   percent: 30 },
+  indexing:  { label: 'Indexing full text', percent: 48 },
+  writing:   { label: 'Writing blog & slides', percent: 72 },
+  media:     { label: 'Generating audio & art', percent: 90 },
+};
+
+const stageOf = (paper: Paper) =>
+  STAGES[paper.stage ?? ''] ??
+  (paper.status === 'downloading'
+    ? STAGES.resolving
+    : { label: 'Working', percent: 60 });
+
 const PaperList: React.FC<PaperListProps> = ({ 
     papers, 
     selectedIds, 
@@ -212,7 +227,7 @@ const PaperList: React.FC<PaperListProps> = ({
                  className={`h-full transition-all duration-1000 ease-in-out ${
                    paper.status === 'downloading' ? 'bg-scholarly-400' : 'bg-purple-500'
                  }`}
-                 style={{ width: paper.status === 'downloading' ? '30%' : '75%' }}
+                 style={{ width: `${stageOf(paper).percent}%` }}
                >
                  <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
                </div>
@@ -366,7 +381,12 @@ const PaperList: React.FC<PaperListProps> = ({
                      <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span> Ready to Analyze
                    </span>
                 )}
-                {paper.status === 'downloading' && (
+                {isProcessing && (
+                  <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <Loader2 className="w-3 h-3 animate-spin" /> {stageOf(paper).label}
+                  </span>
+                )}
+                {false && paper.status === 'downloading' && (
                    <span className="text-xs flex items-center gap-1.5 text-scholarly-600 font-bold px-2 py-1 rounded-full bg-scholarly-50">
                      <Loader2 className="w-3 h-3 animate-spin" /> Fetching Metadata
                    </span>
