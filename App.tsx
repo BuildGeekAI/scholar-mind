@@ -93,6 +93,7 @@ const App: React.FC = () => {
       <ProfileWorkspace
         profileId={activeProfileId}
         onBack={() => { setActiveProfileId(null); refresh(); }}
+        onOpenProfile={(id: string) => { setActiveProfileId(id); refresh(); }}
         onDelete={() => handleDeleteProfile(activeProfileId)}
       />
     );

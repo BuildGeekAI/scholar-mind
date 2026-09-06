@@ -71,6 +71,18 @@ always know which answers rest on full text.
 Indexing first is usually the better order: **Generate** then grounds its writing
 in the indexed full text rather than in a web search.
 
+**One library per scholar.** Searching for a scholar you already have a library
+for offers to open the existing one instead of building a second — which would
+mean a second index and a split chat history. You can still choose to build a
+separate library. It recognises the same scholar across a profile URL, a typed
+name, and abbreviated forms like "G. E. Hinton".
+
+**Papers are only fetched once.** If any profile has already indexed a paper,
+the next one to index it reuses the downloaded PDF instead of hunting for it
+again — roughly twice as fast, and it still works when the publisher has since
+started blocking automated access. Each profile keeps its own search index, so
+no profile can ever retrieve another's library.
+
 The status bar shows how many papers of the batch are done, and what each
 in-flight paper is currently doing.
 

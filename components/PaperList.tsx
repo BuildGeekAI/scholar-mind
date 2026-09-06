@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Paper } from '../types';
-import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2, Database } from 'lucide-react';
+import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2, Database, Youtube, Globe, Library, Mic, Video, FileType } from 'lucide-react';
 import { playAudioUrl, stopAudio } from '../utils/audio';
 import { blobUrl } from '../services/api';
 
@@ -38,6 +38,19 @@ const ARTIFACT_STAGES: Record<string, Stage> = {
   media:     { label: 'Generating audio & art', percent: 85 },
   indexing:  { label: 'Refreshing the index', percent: 95 },
 };
+
+/** How each kind of source announces itself on the card. */
+const KINDS = {
+  paper:     { icon: FileText,  label: 'Paper',     tone: 'bg-slate-100 text-slate-600 border-slate-200' },
+  web:       { icon: Globe,     label: 'Web',       tone: 'bg-sky-50 text-sky-700 border-sky-200' },
+  wikipedia: { icon: Library,   label: 'Wikipedia', tone: 'bg-stone-100 text-stone-700 border-stone-300' },
+  youtube:   { icon: Youtube,   label: 'YouTube',   tone: 'bg-red-50 text-red-700 border-red-200' },
+  video:     { icon: Video,     label: 'Video',     tone: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200' },
+  audio:     { icon: Mic,       label: 'Audio',     tone: 'bg-amber-50 text-amber-700 border-amber-200' },
+  document:  { icon: FileType,  label: 'Document',  tone: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+} as const;
+
+const kindOf = (paper: Paper) => KINDS[paper.kind ?? 'paper'] ?? KINDS.paper;
 
 const isIndexing = (paper: Paper) => paper.indexStatus === 'indexing';
 const isGenerating = (paper: Paper) =>
@@ -318,10 +331,18 @@ const PaperList: React.FC<PaperListProps> = ({
               <div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    <span className="text-xs font-bold px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 border border-slate-200">
-                      {paper.year}
-                    </span>
+                    {(() => {
+                      const kind = kindOf(paper);
+                      const KindIcon = kind.icon;
+                      return (
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-lg border flex items-center gap-1.5 ${kind.tone}`}>
+                          <KindIcon className="w-3 h-3" />
+                          {paper.year || kind.label}
+                        </span>
+                      );
+                    })()}
                     
+                    {(paper.kind ?? 'paper') === 'paper' && (
                     <button 
                        onClick={(e) => toggleCitations(e, paper)}
                        disabled={loadingCitations.has(paper.id)}
@@ -343,6 +364,18 @@ const PaperList: React.FC<PaperListProps> = ({
                             <ChevronDown className="w-3 h-3 ml-0.5" />
                         )}
                     </button>
+                    )}
+                    {paper.sourceUrl && (paper.kind ?? 'paper') !== 'paper' && (
+                      <a
+                        href={paper.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        onClick={e => e.stopPropagation()}
+                        className="text-xs font-semibold text-slate-500 hover:text-scholarly-700 hover:underline truncate max-w-[16rem]"
+                      >
+                        {(() => { try { return new URL(paper.sourceUrl).hostname.replace(/^www\./, ''); } catch { return 'source'; } })()}
+                      </a>
+                    )}
                   </div>
                   
                   {/* Status Icon Top Right */}
@@ -418,9 +451,14 @@ const PaperList: React.FC<PaperListProps> = ({
                 {indexed && (
                    <span
                      className="text-xs flex items-center gap-1.5 text-emerald-700 font-semibold px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-100"
-                     title={paper.indexedKind === 'summary'
-                       ? 'No open-access PDF, so the write-up was embedded instead'
-                       : 'Full text embedded — chat can cite this paper'}
+                     title={
+                       (paper.indexedKind === 'summary'
+                         ? 'No open-access PDF, so the write-up was embedded instead'
+                         : 'Full text embedded — chat can cite this paper') +
+                       (paper.pdfReused
+                         ? '\nThe PDF came from the shared corpus: another profile had already fetched it.'
+                         : '')
+                     }
                    >
                      <Database className="w-3 h-3" />
                      {paper.indexedKind === 'summary' ? 'Indexed (summary)' : 'Indexed'}

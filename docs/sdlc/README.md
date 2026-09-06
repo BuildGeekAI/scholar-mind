@@ -51,18 +51,31 @@ If the plan is wrong, say so rather than improvising around it, and record the d
 
 ## Test
 
-Not yet configured. The plan specifies Vitest, scoped to logic that is pure or easily faked rather than the React tree:
+```bash
+npm test          # vitest run, no network
+npm run test:watch
+```
 
-| Target | Why |
+Vitest, scoped to logic that is pure or easily faked rather than the React tree.
+The suite is deliberately narrow: it exists to catch drift in the places where a
+regression is *silent*, not to chase coverage.
+
+| Suite | Guards against |
 | :--- | :--- |
-| `pcmToWav` | assert the exact 44 header bytes |
-| `blobStore` | one contract suite across both implementations |
-| `repository` | CRUD and cascade deletes against the emulator |
-| `paperSource` | resolution fallback order, mocked `fetch` |
-| `identity` | including rejection of a forged assertion |
-| `export.slugify` | traversal, collisions, unicode |
+| `export.test.ts` | a WAV header that downloads fine and refuses to play |
+| `blobStore.test.ts` | path traversal through a URL-supplied blob key; one profile prefix-matching another |
+| `gemini.test.ts` | an SDK upgrade moving the response text, which would surface as empty blog posts rather than an error |
+| `sse.test.ts` | frames split across network chunks; a malformed frame tearing down the stream |
+| `corpus.test.ts` | a de-dup key too loose (wrong paper's PDF) or too strict (de-dup never fires) |
+| `env.test.ts` | a Cloud Run revision starting with authentication silently disabled |
 
-Until then `npm run typecheck` and the spikes are the safety net.
+What is deliberately *not* covered: anything that needs the live Gemini API.
+Those shapes change out from under the code, and a mock of them would assert
+what was true when it was written. `scripts/spike-phase0*.mjs` cover that by
+calling the real thing, and are run on SDK or model changes.
+
+Two of these suites were written after the bug, not before it — the SSE and
+startup-guard cases both came from failures found by hand.
 
 ## Release
 

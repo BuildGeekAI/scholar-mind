@@ -12,12 +12,22 @@ export interface ProfileRecord {
   affiliation?: string;
   topics?: string[];
   fileSearchStoreName?: string;
+  scholarKeys?: string[];
+}
+
+/** Errors carry the response body, so callers can act on a structured refusal. */
+export interface ApiError extends Error {
+  status: number;
+  data: any;
 }
 
 const json = async (res: Response) => {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Request failed (${res.status})`);
+    const error = new Error(body.error || `Request failed (${res.status})`) as ApiError;
+    error.status = res.status;
+    error.data = body;
+    throw error;
   }
   return res.json();
 };
@@ -46,14 +56,36 @@ export const updateProfile = (id: string, patch: Partial<ProfileRecord>): Promis
 export const deleteProfile = (id: string): Promise<void> => send(`/profiles/${id}`, 'DELETE');
 
 // --- Papers -----------------------------------------------------------------
+/** A profile the user already has for this scholar, returned with a 409. */
+export interface DuplicateProfile {
+  id: string;
+  title: string;
+  scholarName?: string;
+  paperCount: number;
+}
+
 export const searchScholar = (
   profileId: string,
-  query: string
+  query: string,
+  allowDuplicate = false
 ): Promise<{ profile: ProfileRecord; papers: Paper[] }> =>
-  send(`/profiles/${profileId}/search`, 'POST', { query });
+  send(`/profiles/${profileId}/search`, 'POST', { query, allowDuplicate });
 
 export const findPaper = (profileId: string, query: string): Promise<Paper> =>
   send(`/profiles/${profileId}/papers/find`, 'POST', { query });
+
+/** Adds any link — a page, a Wikipedia article, a YouTube video, a PDF. */
+export const addSourceUrl = (profileId: string, url: string): Promise<Paper> =>
+  send(`/profiles/${profileId}/sources`, 'POST', { url });
+
+/** Adds an uploaded document, audio or video file. */
+export const uploadSource = async (profileId: string, file: File): Promise<Paper> => {
+  const form = new FormData();
+  form.append('file', file);
+  return json(
+    await fetch(`/api/profiles/${profileId}/sources/upload`, { method: 'POST', body: form })
+  );
+};
 
 export const fetchCitations = (profileId: string, paperId: string): Promise<Paper[]> =>
   send(`/profiles/${profileId}/papers/${paperId}/citations`, 'POST');

@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm install
+npm test             # vitest, no network
 npm run emulator     # Firestore emulator on :8085 (needs Java)
 npm run dev:local    # app + API on :3000, pointed at the emulator
 npm run dev          # same without emulator env (uses real Firestore via ADC)
@@ -15,7 +16,7 @@ npm run typecheck    # tsc --noEmit
 npm run docker:build
 ```
 
-No test runner is configured. `npm run typecheck` plus `scripts/spike-phase0*.mjs` are the safety net.
+`npm test` runs Vitest over the pure logic that regressions hide in: the WAV header, blob-key traversal guards, `extractText`/`extractJson` against recorded Interactions shapes, the SSE frame parser, the corpus key, and the fail-closed startup guard. It does not touch the network. `scripts/spike-phase0*.mjs` remain the live-API contract check, and `scripts/reconcile-stores.mjs` finds File Search stores no profile references any more.
 
 `.env` is required — see `.env.example`. Only `GEMINI_API_KEY` is strictly needed; the local set also wants `FIRESTORE_EMULATOR_HOST`, `GOOGLE_CLOUD_PROJECT`, and `FILE_SEARCH_STORE_PREFIX`.
 
@@ -38,6 +39,7 @@ server/
   fileSearch.ts   per-profile store lifecycle
   paperSource.ts  open-access PDF resolution
   ingest.ts       per-paper pipeline; `mode` selects index, artifacts, or both
+  corpus.ts       cross-profile paper de-duplication
   export.ts       ZIP + pcmToWav
 services/api.ts   the browser's only server interface
 ```
@@ -58,6 +60,13 @@ These were found by testing the live API. Each cost a debugging session.
 
 **Illustrations are JPEG, not PNG.** Store and serve the real mime type — the old code hard-coded `data:image/png`.
 
+**File Search retrieval cannot be scoped below a store.** Three findings, all verified live:
+- `metadataFilter` only works on the API's *own* recognised keys. `year=2017` filters correctly; an app-defined key (string **or** numeric) silently matches **nothing** — same documents, same values, different key name. A malformed filter 400s, so the filter is being parsed; it just never matches.
+- String `customMetadata` values are not filterable at all, in any syntax tried.
+- `fileSearchStoreNames` is an array, and attaching a subset works exactly, but the limit is under ten stores per call (5 passes, 10 returns `400 Invalid input received`).
+
+Together these mean one shared index cannot be filtered down to one profile's papers. **The per-profile store boundary is the isolation mechanism** — do not replace it with a filter.
+
 **Deleting an indexed document needs `force: true`.** Without it the API returns `400 'Cannot delete non-empty Document'` — the chunks it was split into count as children. Same shape as store deletion.
 
 **Firestore merge writes cannot clear a field.** `ignoreUndefinedProperties` makes the client drop undefined keys, so `set({stage: undefined}, {merge:true})` leaves the old value in place. `repository.withDeletions` maps the pipeline's transient fields to `FieldValue.delete()`.
@@ -71,6 +80,10 @@ These were found by testing the live API. Each cost a debugging session.
 **Everything degrades.** No PDF falls back to URL context, then to search grounding. A missing artifact must never block a paper.
 
 **Bytes never enter React state or Firestore.** `Paper` carries `illustrationKey` / `audioKey` / `pdfKey`; `/api/blobs/*` checks ownership against the profile ID embedded in the key, so a key alone is not a capability.
+
+**Papers are de-duplicated across profiles and owners, but embeddings are not.** `server/corpus.ts` keys papers by normalized title and caches the resolved source URL and the PDF bytes, so the second profile to index a paper skips resolution and download (10.6s → 5.2s measured). The embedding is repeated per profile because of the retrieval constraint above. The corpus holds only public open-access content — never anything profile-specific.
+
+**Duplicate scholar libraries are detected, not prevented.** A profile records every identity its scholar is known by (`scholarKeys`) — the Google Scholar `user=` id, the normalized name, and a first-plus-last-token form that survives middle names. `POST /profiles/:id/search` checks cheaply before the model call and again after resolution, returning `409 {duplicate}`; `allowDuplicate: true` overrides. Papers are not written until the check passes, so a rejected search leaves nothing behind.
 
 **Indexing and artifact generation are separate operations,** behind separate buttons and separate status fields (`indexStatus` vs `status`). Indexing is seconds and is what chat needs; generation is a minute and is what reading needs. Neither may clobber the other's state.
 

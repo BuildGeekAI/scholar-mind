@@ -2,7 +2,7 @@ import { Storage } from '@google-cloud/storage';
 import { promises as fs } from 'fs';
 import path from 'path';
 
-export type BlobKind = 'pdf' | 'illustration' | 'audio';
+export type BlobKind = 'pdf' | 'illustration' | 'audio' | 'media';
 
 export interface StoredBlob {
   data: Buffer;

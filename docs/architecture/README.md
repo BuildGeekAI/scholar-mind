@@ -226,6 +226,61 @@ its full text.
 
 ---
 
+## De-duplicating papers across profiles
+
+Two profiles holding the same paper used to resolve it twice and download it
+twice. The obvious fix — index it once into a shared store — does not work, and
+the reason is worth recording because it looks like it should.
+
+Verified against the live API:
+
+| Attempt | Result |
+| --- | --- |
+| `metadataFilter: 'paperKey="arxiv-1111"'` (string) | matches **nothing** |
+| `metadataFilter: 'paperNum=1000'` (app-defined numeric key) | matches **nothing** |
+| `metadataFilter: 'year=2017'` (recognised key, same documents) | filters **correctly** |
+| `metadataFilter: 'THIS IS NOT A FILTER'` | `400` — so the filter *is* parsed |
+| Attach 5 stores to one call | works, retrieval is exactly those 5 |
+| Attach 10 stores to one call | `400 Invalid input received` |
+
+So retrieval can be scoped to a *store*, but not to a subset of one, and a call
+cannot attach enough stores for store-per-paper to scale. **The per-profile
+store boundary is the isolation mechanism.** A shared index with a filter would
+have leaked one profile's library into another's answers.
+
+What is shared instead is everything before the embedding:
+
+```mermaid
+flowchart TD
+    P["Profile B indexes<br/>'Attention Is All You Need'"] --> K["canonicalKey<br/><i>normalized title + hash</i>"]
+    K --> L{"in the corpus?"}
+
+    L -->|"hit, bytes cached"| R["reuse the PDF<br/><i>no resolve, no download</i>"]
+    L -->|"hit, known unavailable"| N["skip resolution<br/><i>30-day negative cache</i>"]
+    L -->|"miss"| F["arXiv → Crossref → Unpaywall<br/>→ fetch → remember"]
+
+    R --> E["embed into<br/>profile B's own store"]
+    N --> E
+    F --> E
+
+    style R fill:#ecfdf5,stroke:#059669
+    style N fill:#ecfdf5,stroke:#059669
+    style E fill:#f5f3ff,stroke:#7c3aed
+```
+
+Measured: 10.6s cold, 5.2s reused. What remains is the upload-and-embed, which
+is per-store and therefore irreducible.
+
+The corpus is keyed by paper alone, not by owner, so it de-duplicates across
+users as well as profiles. That is safe precisely because of what it holds:
+public open-access PDFs and the URLs they came from. Generated write-ups, chat,
+and anything else profile-specific stay inside the profile. Cached bytes live
+under `corpus/`, outside every profile namespace, and `/api/blobs/*` only serves
+keys under `profiles/` — so the shared cache is reachable by the server and
+never by a browser.
+
+---
+
 ## Why the Developer API, not Vertex
 
 Vertex would allow ADC and no API key at all, which is otherwise preferable.
