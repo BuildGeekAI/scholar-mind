@@ -30,9 +30,17 @@ export interface Paper {
   quiz?: QuizQuestion[];
   flashCards?: FlashCard[];
   audioScript?: string;
-  audioBase64?: string;
-  illustration?: string;
   citingPapers?: Paper[];
+
+  // Server-persisted artifacts. Bytes live in the blob store; these are pointers.
+  illustrationKey?: string;
+  illustrationMime?: string;
+  audioKey?: string;
+  audioMime?: string;
+  pdfKey?: string;
+  sourceUrl?: string;
+  pdfStatus?: 'pending' | 'found' | 'fetched' | 'unavailable' | 'error';
+  fileSearchDocName?: string;
 }
 
 export interface Message {
@@ -68,15 +76,19 @@ export enum AppState {
   READY
 }
 
-export type ScholarProfile = ScholarData;
+/**
+ * The localStorage-era shapes. Retained solely so the one-time import endpoint
+ * can read old browser data; nothing else should reference them.
+ */
+export interface LegacyPaper extends Paper {
+  audioBase64?: string;
+  illustration?: string;
+}
 
-export interface Notebook {
-  id: string;
-  title: string;
-  emoji: string;
-  createdAt: number;
-  updatedAt: number;
-  profile: ScholarProfile | null;
-  chatMessages: Message[];
-  theme: string;
+export interface LegacyScholarData extends Omit<ScholarData, 'papers'> {
+  papers: LegacyPaper[];
+}
+
+export interface LegacyProfile extends Omit<Profile, 'scholar'> {
+  scholar: LegacyScholarData | null;
 }

@@ -2,8 +2,8 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Paper } from '../types';
 import { X, FileText, MonitorPlay, Play, Loader2, BrainCircuit, Layers, Check, ChevronLeft, ChevronRight, RotateCw, Calendar, Quote, Clock, Copy, Download, Square, Mic, Volume2, Radio } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { playPcmAudio, stopAudio } from '../utils/audio';
-import { generateAudio } from '../services/geminiService';
+import { playAudioUrl, playAudioBlob, stopAudio } from '../utils/audio';
+import { blobUrl, speak } from '../services/api';
 
 interface BlogReaderProps {
   paper: Paper | null;
@@ -91,7 +91,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
   if (!paper) return null;
 
   const handlePlayAudio = async () => {
-    if (!paper.audioBase64) return;
+    if (!paper.audioKey) return;
     
     // Toggle logic
     if (isPlaying) {
@@ -101,7 +101,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
     }
 
     setIsPlaying(true);
-    await playPcmAudio(paper.audioBase64, () => {
+    await playAudioUrl(blobUrl(paper.audioKey)!, () => {
         setIsPlaying(false);
     });
   };
@@ -112,9 +112,9 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
     setHostStatus('speaking');
     stopAudio(); // Stop any previous audio
     
-    const audioData = await generateAudio(text, selectedVoice);
+    const audioData = await speak(text, selectedVoice);
     if (audioData) {
-        await playPcmAudio(audioData, () => {
+        await playAudioBlob(audioData, () => {
             setHostStatus('idle');
             if (onEnded) onEnded();
         });
@@ -293,7 +293,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                 <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Research Viewer</h3>
              </div>
              <div className="flex items-center gap-2">
-               {paper.audioBase64 && !isConversationalMode && (
+               {paper.audioKey && !isConversationalMode && (
                  <button 
                   onClick={handlePlayAudio}
                   className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-full transition-colors mr-2 ${
@@ -358,10 +358,10 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
           {activeTab === 'blog' && (
             <div className="p-0">
                {/* Hero Illustration */}
-               {paper.illustration && (
+               {paper.illustrationKey && (
                  <div className="w-full h-64 sm:h-80 bg-slate-200 overflow-hidden relative">
                     <img 
-                      src={`data:image/png;base64,${paper.illustration}`} 
+                      src={blobUrl(paper.illustrationKey)} 
                       alt="Scientific Illustration" 
                       className="w-full h-full object-cover"
                     />
@@ -376,7 +376,7 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                )}
 
               <div className="p-8 sm:p-12 prose prose-slate max-w-none">
-                {!paper.illustration && paper.blogTitle && (
+                {!paper.illustrationKey && paper.blogTitle && (
                   <h1 className="font-serif text-3xl sm:text-4xl text-slate-900 mb-6 font-bold leading-tight">
                     {paper.blogTitle}
                   </h1>

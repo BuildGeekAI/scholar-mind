@@ -5,13 +5,14 @@ import ReactMarkdown from 'react-markdown';
 
 interface ChatInterfaceProps {
   messages: Message[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, useWebSearch?: boolean) => void;
   isProcessing: boolean;
   readyToChat: boolean;
   onClose?: () => void;
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isProcessing, readyToChat, onClose }) => {
+  const [useWebSearch, setUseWebSearch] = useState(false);
   const [input, setInput] = useState('');
   const [isSearchVisible, setIsSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -31,7 +32,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isProcessing) return;
-    onSendMessage(input);
+    onSendMessage(input, useWebSearch);
     setInput('');
   };
 
@@ -200,6 +201,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
 
       {/* Input Area */}
       <div className="p-4 bg-white border-t border-slate-200 shrink-0">
+        <div className="flex items-center gap-2 mb-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setUseWebSearch(v => !v)}
+            title="File search and web search cannot be combined in one request, so each message uses one or the other."
+            className={`px-2.5 py-1 rounded-full font-medium transition-colors border ${
+              useWebSearch
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                : 'bg-scholarly-50 text-scholarly-700 border-scholarly-200'
+            }`}
+          >
+            {useWebSearch ? '🌐 Searching the web' : '📚 Using your library'}
+          </button>
+          <span className="text-slate-400">tap to switch</span>
+        </div>
         <form onSubmit={handleSubmit} className="flex items-center gap-2 relative">
           <input
             type="text"

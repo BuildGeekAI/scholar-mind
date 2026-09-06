@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Plus, MoreVertical, Search, X } from 'lucide-react';
-import { Profile } from '../types';
+import { Plus, MoreVertical, Search, X, Download } from 'lucide-react';
+import * as api from '../services/api';
 
 interface DashboardProps {
-  profiles: Profile[];
+  profiles: api.ProfileRecord[];
   onCreateProfile: () => void;
   onSelectProfile: (id: string) => void;
   onDeleteProfile: (id: string, e: React.MouseEvent) => void;
@@ -23,7 +23,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, onCreateProfile, onSele
   const filteredProfiles = profiles
     .filter(p => 
       p.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      (p.scholar?.name || '').toLowerCase().includes(searchTerm.toLowerCase())
+      (p.scholarName || '').toLowerCase().includes(searchTerm.toLowerCase())
     )
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
@@ -121,12 +121,22 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, onCreateProfile, onSele
                    >
                       <div className="flex justify-between items-start">
                          <span className="text-4xl filter drop-shadow-sm transition-transform group-hover:scale-110">{profile.emoji}</span>
-                         <button 
-                           onClick={(e) => onDeleteProfile(profile.id, e)}
-                           className="p-1.5 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                         >
-                            <MoreVertical className="w-5 h-5" />
-                         </button>
+                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                           <a
+                             href={api.exportUrl(profile.id)}
+                             onClick={(e) => e.stopPropagation()}
+                             title="Export this profile as a ZIP"
+                             className="p-1.5 rounded-full hover:bg-scholarly-50 text-slate-300 hover:text-scholarly-600 transition-colors"
+                           >
+                              <Download className="w-5 h-5" />
+                           </a>
+                           <button 
+                             onClick={(e) => onDeleteProfile(profile.id, e)}
+                             className="p-1.5 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-500 transition-all"
+                           >
+                              <MoreVertical className="w-5 h-5" />
+                           </button>
+                         </div>
                       </div>
 
                       <div>
@@ -137,7 +147,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, onCreateProfile, onSele
                             <span>{formatDate(profile.updatedAt)}</span>
                             <span className="flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-full">
                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
-                               {profile.scholar?.papers.length || 0} sources
+                               {profile.affiliation || 'No sources yet'}
                             </span>
                          </div>
                       </div>

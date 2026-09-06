@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Paper } from '../types';
 import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Download, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2 } from 'lucide-react';
-import { playPcmAudio, stopAudio } from '../utils/audio';
+import { playAudioUrl, stopAudio } from '../utils/audio';
+import { blobUrl } from '../services/api';
 
 interface PaperListProps {
   papers: Paper[];
@@ -52,7 +53,7 @@ const PaperList: React.FC<PaperListProps> = ({
 
   const handlePlayAudio = async (e: React.MouseEvent, paper: Paper) => {
     e.stopPropagation();
-    if (!paper.audioBase64) return;
+    if (!paper.audioKey) return;
     
     // Toggle: Stop if currently playing this paper
     if (playingId === paper.id) {
@@ -63,7 +64,7 @@ const PaperList: React.FC<PaperListProps> = ({
 
     // Play new paper (implicitly stops others via utility)
     setPlayingId(paper.id);
-    await playPcmAudio(paper.audioBase64, () => {
+    await playAudioUrl(blobUrl(paper.audioKey)!, () => {
         setPlayingId(prev => prev === paper.id ? null : prev);
     });
   };
@@ -235,13 +236,14 @@ const PaperList: React.FC<PaperListProps> = ({
             </div>
 
             {/* Thumbnail Image or Placeholder */}
-            {paper.status === 'converted' && paper.illustration ? (
+            {paper.status === 'converted' && paper.illustrationKey ? (
               <div 
                 className="hidden sm:block w-32 h-24 shrink-0 rounded-xl bg-slate-100 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity border border-slate-100 shadow-inner group-hover:shadow-md"
                 onClick={() => onReadBlog(paper)}
               >
                 <img 
-                  src={`data:image/png;base64,${paper.illustration}`} 
+                  src={blobUrl(paper.illustrationKey)}
+                  loading="lazy" 
                   alt="Paper illustration" 
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                 />
@@ -390,7 +392,7 @@ const PaperList: React.FC<PaperListProps> = ({
                       <MonitorPlay className="w-3.5 h-3.5" /> Slides
                     </button>
 
-                    {paper.audioBase64 && (
+                    {paper.audioKey && (
                       <button 
                         onClick={(e) => handlePlayAudio(e, paper)}
                         className={`flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-xl transition-all border ${
