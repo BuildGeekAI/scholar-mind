@@ -32,6 +32,32 @@ const App: React.FC = () => {
   useEffect(() => { refresh(); }, [refresh]);
 
   /**
+   * The landing page found nothing for a query, so build it: a fresh profile,
+   * then the scholar search inside it. Opening the workspace only after the
+   * search lands means the user never sees an empty shell.
+   */
+  const handleCreateFor = useCallback(async (query: string) => {
+    try {
+      const created = await api.createProfile(
+        'Untitled profile',
+        EMOJIS[Math.floor(Math.random() * EMOJIS.length)]
+      );
+      try {
+        await api.searchScholar(created.id, query);
+      } catch (searchError: any) {
+        // A duplicate here means another profile already covers it; the
+        // workspace surfaces that. Anything else is reported but still opens,
+        // because the profile exists and the user can retry inside it.
+        console.error(searchError);
+      }
+      await refresh();
+      setActiveProfileId(created.id);
+    } catch (e: any) {
+      alert(e.message || 'Could not create that library.');
+    }
+  }, [refresh]);
+
+  /**
    * One-time hand-off from the localStorage era. The key is cleared only after
    * the server confirms the import, so a failure leaves the old data intact.
    */
@@ -145,6 +171,7 @@ const App: React.FC = () => {
       <Dashboard
         profiles={profiles}
         onCreateProfile={handleCreateProfile}
+        onCreateFor={handleCreateFor}
         theme={theme}
         onToggleTheme={toggleTheme}
         onSelectProfile={setActiveProfileId}

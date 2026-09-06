@@ -2,17 +2,20 @@ import React, { useState } from 'react';
 import { Plus, MoreVertical, Search, X, Download, Sun, Moon } from 'lucide-react';
 import { Theme } from './theme';
 import * as api from '../services/api';
+import LandingSearch from './LandingSearch';
 
 interface DashboardProps {
   profiles: api.ProfileRecord[];
   theme: Theme;
   onToggleTheme: () => void;
+  /** Creates a profile and immediately searches it for the given scholar. */
+  onCreateFor: (query: string) => Promise<void>;
   onCreateProfile: () => void;
   onSelectProfile: (id: string) => void;
   onDeleteProfile: (id: string, e: React.MouseEvent) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, onCreateProfile, onSelectProfile, onDeleteProfile }) => {
+const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, onCreateFor, onCreateProfile, onSelectProfile, onDeleteProfile }) => {
   const [searchTerm, setSearchTerm] = useState('');
   
   const formatDate = (timestamp: number) => {
@@ -90,6 +93,8 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
               </button>
            </div>
         </div>
+
+        <LandingSearch onOpenProfile={onSelectProfile} onCreateFor={onCreateFor} />
 
         {/* Content Section */}
         <div className="mb-8">

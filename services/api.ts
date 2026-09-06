@@ -55,6 +55,24 @@ export const updateProfile = (id: string, patch: Partial<ProfileRecord>): Promis
 
 export const deleteProfile = (id: string): Promise<void> => send(`/profiles/${id}`, 'DELETE');
 
+// --- Discovery (the landing page) -------------------------------------------
+export interface DiscoveredProfile {
+  id: string;
+  title: string;
+  emoji: string;
+  scholarName?: string;
+  affiliation?: string;
+  topics: string[];
+  sourceCount: number;
+  indexedCount: number;
+  updatedAt: number;
+  /** True when the scholar identity matches, rather than just the text. */
+  exact: boolean;
+}
+
+export const discover = (query: string): Promise<{ query: string; matches: DiscoveredProfile[] }> =>
+  send(`/discover?q=${encodeURIComponent(query)}`, 'GET');
+
 // --- Papers -----------------------------------------------------------------
 /** A profile the user already has for this scholar, returned with a 409. */
 export interface DuplicateProfile {
@@ -172,11 +190,19 @@ export const processPapers = (
   });
 
 export const streamChat = (
-  profileId: string,
+  /** null asks across every library — what the landing page does. */
+  profileId: string | null,
   message: string,
   useWebSearch: boolean,
   onDelta: (text: string) => void,
-  onDone?: (info: { grounded: boolean; fellBack?: boolean; indexed?: number; pending?: number }) => void,
+  onDone?: (info: {
+    grounded: boolean;
+    fellBack?: boolean;
+    indexed?: number;
+    pending?: number;
+    searchedLibraries?: string[];
+    skippedLibraries?: number;
+  }) => void,
   onError?: (message: string) => void,
   onCitations?: (citations: Citation[]) => void
 ): Promise<void> =>
