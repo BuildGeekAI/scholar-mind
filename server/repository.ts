@@ -108,6 +108,48 @@ export const deleteProfile = async (ownerId: string, id: string): Promise<boolea
   return true;
 };
 
+/**
+ * The shared paper corpus: one record per canonical paper, across every profile
+ * and owner. It caches the *expensive and unreliable* half of indexing — source
+ * resolution and the PDF download — so the second profile to index a paper
+ * never repeats them. It holds nothing profile-specific.
+ */
+export interface CorpusRecord {
+  key: string;
+  title: string;
+  /** Blob key of the cached PDF, if one was ever retrieved. */
+  pdfBlobKey?: string;
+  sourceUrl?: string;
+  pdfStatus?: Paper['pdfStatus'];
+  firstSeenAt: number;
+  updatedAt: number;
+  /** How many times reuse has saved a resolve-and-fetch. Diagnostics only. */
+  reuseCount?: number;
+}
+
+const corpus = () => db().collection('corpus');
+
+export const getCorpusRecord = async (key: string): Promise<CorpusRecord | null> => {
+  const doc = await corpus().doc(key).get();
+  return doc.exists ? (doc.data() as CorpusRecord) : null;
+};
+
+export const putCorpusRecord = async (record: CorpusRecord): Promise<void> => {
+  await corpus().doc(record.key).set(record, { merge: true });
+};
+
+/** Atomic so concurrent workers indexing the same paper cannot lose counts. */
+export const noteCorpusReuse = async (key: string): Promise<void> => {
+  await corpus()
+    .doc(key)
+    .set({ reuseCount: FieldValue.increment(1), updatedAt: Date.now() }, { merge: true });
+};
+
+export const listCorpus = async (): Promise<CorpusRecord[]> => {
+  const snapshot = await corpus().get();
+  return snapshot.docs.map(d => d.data() as CorpusRecord);
+};
+
 export const listPapers = async (profileId: string): Promise<Paper[]> => {
   const snapshot = await papersOf(profileId).get();
   return snapshot.docs.map(d => d.data() as Paper);

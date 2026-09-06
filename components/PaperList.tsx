@@ -418,9 +418,14 @@ const PaperList: React.FC<PaperListProps> = ({
                 {indexed && (
                    <span
                      className="text-xs flex items-center gap-1.5 text-emerald-700 font-semibold px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-100"
-                     title={paper.indexedKind === 'summary'
-                       ? 'No open-access PDF, so the write-up was embedded instead'
-                       : 'Full text embedded — chat can cite this paper'}
+                     title={
+                       (paper.indexedKind === 'summary'
+                         ? 'No open-access PDF, so the write-up was embedded instead'
+                         : 'Full text embedded — chat can cite this paper') +
+                       (paper.pdfReused
+                         ? '\nThe PDF came from the shared corpus: another profile had already fetched it.'
+                         : '')
+                     }
                    >
                      <Database className="w-3 h-3" />
                      {paper.indexedKind === 'summary' ? 'Indexed (summary)' : 'Indexed'}

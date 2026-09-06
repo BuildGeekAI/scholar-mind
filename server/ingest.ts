@@ -3,6 +3,7 @@ import { BlobStore, blobKey } from './blobStore';
 import { generateAudio, generateIllustration, generatePaperResources } from './gemini';
 import { deleteDocument, indexDocument } from './fileSearch';
 import { fetchPdf, resolvePaperSource } from './paperSource';
+import * as corpus from './corpus';
 import * as repo from './repository';
 
 export type ProgressFn = (paper: Paper) => void | Promise<void>;
@@ -19,21 +20,64 @@ export type PipelineMode = 'index' | 'artifacts' | 'both';
  * rather than block: a missing PDF must never stop a paper from being indexed
  * or from producing content.
  */
+/**
+ * A paper that resolved to nothing may become open access later, so the
+ * negative result is cached but not forever.
+ */
+const NEGATIVE_CACHE_MS = 30 * 24 * 60 * 60 * 1000;
+
 const acquirePdf = async (
   profileId: string,
   paper: Paper,
   blobs: BlobStore,
   setStage: (stage: Paper['stage']) => Promise<void>
 ): Promise<{ patch: Partial<Paper>; bytes: Buffer | null }> => {
-  // Already fetched on an earlier run: reuse the bytes instead of re-downloading.
+  // 1. This profile already holds the bytes from an earlier run.
   if (paper.pdfKey) {
     const stored = await blobs.get(paper.pdfKey).catch(() => null);
     if (stored) return { patch: {}, bytes: stored.data };
   }
 
+  // 2. Some other profile — possibly another user's — already did this work.
+  //    Resolution and download are identical for the same paper everywhere, so
+  //    they are shared. The embedding still happens per profile, because that
+  //    store boundary is what keeps libraries isolated.
+  const hit = await corpus.lookup(paper, blobs);
+
+  if (hit?.bytes) {
+    const key = blobKey(profileId, paper.id, 'pdf');
+    // Copied into the profile's own namespace so blob ownership checks, export
+    // and profile deletion all keep working unchanged.
+    await blobs.put(key, hit.bytes, 'application/pdf');
+    void corpus.noteReuse(hit.record.key);
+    return {
+      patch: {
+        pdfKey: key,
+        pdfStatus: 'fetched',
+        sourceUrl: hit.record.sourceUrl,
+        pdfReused: true,
+      },
+      bytes: hit.bytes,
+    };
+  }
+
+  const negativeStillFresh =
+    hit?.record.pdfStatus === 'unavailable' &&
+    Date.now() - (hit.record.updatedAt ?? 0) < NEGATIVE_CACHE_MS;
+
+  if (negativeStillFresh) {
+    void corpus.noteReuse(hit!.record.key);
+    return {
+      patch: { pdfStatus: 'unavailable', sourceUrl: hit!.record.sourceUrl, pdfReused: true },
+      bytes: null,
+    };
+  }
+
+  // 3. Nobody has seen this paper before. Do the work, then share it.
   await setStage('resolving');
   const source = await resolvePaperSource(paper);
   if (!source.pdfUrl) {
+    void corpus.remember(paper, { pdfStatus: 'unavailable', sourceUrl: source.landingUrl }, blobs);
     return { patch: { pdfStatus: 'unavailable', sourceUrl: source.landingUrl }, bytes: null };
   }
 
@@ -41,12 +85,17 @@ const acquirePdf = async (
 
   await setStage('fetching');
   const bytes = await fetchPdf(source.pdfUrl);
-  if (!bytes) return { patch, bytes: null };
+  if (!bytes) {
+    // Resolution succeeded but the fetch did not; remember the URL, not a failure.
+    void corpus.remember(paper, { sourceUrl: source.pdfUrl, pdfStatus: 'found' }, blobs);
+    return { patch, bytes };
+  }
 
   const key = blobKey(profileId, paper.id, 'pdf');
   await blobs.put(key, bytes, 'application/pdf');
   patch.pdfKey = key;
   patch.pdfStatus = 'fetched';
+  await corpus.remember(paper, { bytes, sourceUrl: source.pdfUrl, pdfStatus: 'fetched' }, blobs);
   return { patch, bytes };
 };
 

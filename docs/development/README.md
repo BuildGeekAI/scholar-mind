@@ -163,4 +163,22 @@ Server logs appear in the Vite terminal — the API runs in that process.
 npm run typecheck
 ```
 
-No test runner yet. See [sdlc](../sdlc/README.md#test).
+## Tests
+
+```bash
+npm test          # vitest run — pure logic, no network
+npm run test:watch
+```
+
+See [sdlc](../sdlc/README.md#test) for what is covered and what is deliberately not.
+
+## Housekeeping
+
+```bash
+node scripts/reconcile-stores.mjs            # report File Search stores no profile references
+node scripts/reconcile-stores.mjs --delete   # remove them
+```
+
+Store deletion on profile delete is best-effort, so failures leak stores that
+count against project quota. Run this occasionally. It only ever considers
+stores matching this app's display-name convention.

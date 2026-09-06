@@ -51,6 +51,11 @@ export interface Paper {
   indexStatus?: 'indexing' | 'indexed' | 'error';
   /** Whether the indexed document is the paper's full text or a written summary. */
   indexedKind?: 'pdf' | 'summary';
+  /**
+   * The PDF came from the shared corpus — another profile had already resolved
+   * and downloaded it, so this index skipped both steps.
+   */
+  pdfReused?: boolean;
 }
 
 export interface Citation {

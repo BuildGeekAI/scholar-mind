@@ -155,6 +155,22 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     };
   }, [papers, batch, isBusy]);
 
+  /**
+   * A run keeps going server-side even when the SSE stream does not — a reload,
+   * a navigation, a dropped connection. Firestore stays authoritative, so while
+   * anything is in flight the list is refreshed from it rather than left frozen
+   * on whatever the last delivered event happened to say.
+   */
+  useEffect(() => {
+    if (!profile || !isAnyProcessing) return;
+    const handle = setInterval(() => {
+      api.listPapers(profile.id).then(setPapers).catch(() => {
+        // Transient failure: the next tick tries again.
+      });
+    }, 4000);
+    return () => clearInterval(handle);
+  }, [profile, isAnyProcessing]);
+
   const mergePaper = useCallback((incoming: Paper) => {
     setPapers(prev => {
       const index = prev.findIndex(p => p.id === incoming.id);
