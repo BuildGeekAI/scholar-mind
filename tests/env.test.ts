@@ -66,3 +66,52 @@ describe('startup guard', () => {
     warn.mockRestore();
   });
 });
+
+describe('API key authentication', () => {
+  const load = async () => {
+    vi.resetModules();
+    return import('../server/identity');
+  };
+
+  it('accepts the configured key in either header', async () => {
+    vi.stubEnv('SCHOLARMIND_API_KEY', 'sk-test-1234567890');
+    const { resolveUser } = await load();
+    const viaHeader = await resolveUser(new Headers({ 'x-api-key': 'sk-test-1234567890' }));
+    const viaBearer = await resolveUser(new Headers({ authorization: 'Bearer sk-test-1234567890' }));
+    expect(viaHeader?.id).toBeTruthy();
+    expect(viaBearer?.id).toBe(viaHeader?.id);
+  });
+
+  it('rejects a wrong key in production rather than falling through', async () => {
+    vi.stubEnv('SCHOLARMIND_API_KEY', 'sk-test-1234567890');
+    vi.stubEnv('NODE_ENV', 'production');
+    const { resolveUser } = await load();
+    expect(await resolveUser(new Headers({ 'x-api-key': 'wrong' }))).toBeNull();
+  });
+
+  it('rejects a wrong key in development too, instead of silently allowing it', async () => {
+    // Otherwise a misconfigured integration works locally and fails only once
+    // it is deployed, which is the worst place to find out.
+    vi.stubEnv('SCHOLARMIND_API_KEY', 'sk-test-1234567890');
+    vi.stubEnv('NODE_ENV', 'development');
+    const { resolveUser } = await load();
+    expect(await resolveUser(new Headers({ 'x-api-key': 'wrong' }))).toBeNull();
+    // A request with no key at all is still the local browser.
+    expect((await resolveUser(new Headers()))?.id).toBe('dev-user');
+  });
+
+  it('rejects a key that is merely a prefix of the real one', async () => {
+    vi.stubEnv('SCHOLARMIND_API_KEY', 'sk-test-1234567890');
+    vi.stubEnv('NODE_ENV', 'production');
+    const { resolveUser } = await load();
+    expect(await resolveUser(new Headers({ 'x-api-key': 'sk-test' }))).toBeNull();
+  });
+
+  it('is inert when no key is configured', async () => {
+    vi.stubEnv('SCHOLARMIND_API_KEY', '');
+    vi.stubEnv('NODE_ENV', 'production');
+    const { resolveUser } = await load();
+    expect(await resolveUser(new Headers({ 'x-api-key': '' }))).toBeNull();
+    expect(await resolveUser(new Headers())).toBeNull();
+  });
+});
