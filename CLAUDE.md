@@ -16,7 +16,7 @@ npm run typecheck    # tsc --noEmit
 npm run docker:build
 ```
 
-`npm test` runs Vitest over the pure logic that regressions hide in: the WAV header, blob-key traversal guards, `extractText`/`extractJson` against recorded Interactions shapes, the SSE frame parser, the corpus key, and the fail-closed startup guard. It does not touch the network. `scripts/spike-phase0*.mjs` remain the live-API contract check, and `scripts/reconcile-stores.mjs` finds File Search stores no profile references any more.
+`npm test` runs Vitest (113 cases) over the pure logic that regressions hide in: the WAV header, blob-key traversal guards, `extractText`/`extractJson` against recorded Interactions shapes, the SSE frame parser, the corpus and scholar keys, citation formatting, and the fail-closed startup guard. It does not touch the network. `scripts/spike-phase0*.mjs` remain the live-API contract check, and `scripts/reconcile-stores.mjs` finds File Search stores no profile references any more.
 
 `.env` is required — see `.env.example`. Only `GEMINI_API_KEY` is strictly needed; the local set also wants `FIRESTORE_EMULATOR_HOST`, `GOOGLE_CLOUD_PROJECT`, and `FILE_SEARCH_STORE_PREFIX`.
 
@@ -39,9 +39,12 @@ server/
   fileSearch.ts   per-profile store lifecycle
   paperSource.ts  open-access PDF resolution
   ingest.ts       per-paper pipeline; `mode` selects index, artifacts, or both
-  corpus.ts       cross-profile paper de-duplication
+  corpus.ts       cross-profile paper de-duplication; scholar identity keys
+  sources.ts      YouTube, web, Wikipedia, uploads → extracted text
+  citations.ts    BibTeX/APA/MLA/Chicago/Harvard/RIS + Crossref enrichment
   export.ts       ZIP + pcmToWav
 services/api.ts   the browser's only server interface
+mcp/server.mjs    MCP server — a client of the HTTP API, not a second one
 ```
 
 ## Constraints that will bite you
@@ -60,10 +63,18 @@ These were found by testing the live API. Each cost a debugging session.
 
 **Illustrations are JPEG, not PNG.** Store and serve the real mime type — the old code hard-coded `data:image/png`.
 
+**The Interactions API does not accept `parts`.** `{parts:[{fileData}]}` returns `400 Unknown parameter 'parts'`. It takes its own typed content blocks — `{type:'video'|'audio'|'document', uri, mime_type}` — and a YouTube URL works as a `video` block directly, with no download. Media **does** compose with `response_format`, unlike grounding tools.
+
+**Sources are extracted once, at add time.** `sources.ts` normalises every kind to `extractedText`; indexing and generation both read that rather than re-fetching. A video is watched once no matter how many times it is used.
+
+**Citations never come from the model.** Only from stored metadata and Crossref, matched on exact normalised title. A hallucinated volume number reads as authoritative and ends up in a bibliography. Crossref's free search frequently fails to find records that exist — treat enrichment as best-effort and say so in the UI.
+
+**A wrong API key is refused in every environment**, including development. Falling through to the dev user on a mismatch would mean a misconfigured integration works locally and fails only in production.
+
 **File Search retrieval cannot be scoped below a store.** Three findings, all verified live:
 - `metadataFilter` only works on the API's *own* recognised keys. `year=2017` filters correctly; an app-defined key (string **or** numeric) silently matches **nothing** — same documents, same values, different key name. A malformed filter 400s, so the filter is being parsed; it just never matches.
 - String `customMetadata` values are not filterable at all, in any syntax tried.
-- `fileSearchStoreNames` is an array, and attaching a subset works exactly, but the limit is under ten stores per call (5 passes, 10 returns `400 Invalid input received`).
+- `fileSearchStoreNames` is an array, and attaching a subset works exactly, but **five stores per call is the hard limit** — six returns `400 Invalid input received`. This is why a cross-library chat reports how many libraries it could not search.
 
 Together these mean one shared index cannot be filtered down to one profile's papers. **The per-profile store boundary is the isolation mechanism** — do not replace it with a filter.
 

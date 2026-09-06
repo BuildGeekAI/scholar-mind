@@ -172,6 +172,18 @@ npm run test:watch
 
 See [sdlc](../sdlc/README.md#test) for what is covered and what is deliberately not.
 
+## MCP
+
+```bash
+npm start                                   # the API must be running first
+claude mcp add scholarmind -- node $PWD/mcp/server.mjs
+```
+
+The MCP server is a client of the HTTP API. Debug it by driving stdio directly,
+or just call the endpoint it wraps with `curl` — they are the same code path.
+
+→ [API & MCP reference](../api/README.md)
+
 ## Housekeeping
 
 ```bash

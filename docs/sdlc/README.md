@@ -67,7 +67,8 @@ regression is *silent*, not to chase coverage.
 | `gemini.test.ts` | an SDK upgrade moving the response text, which would surface as empty blog posts rather than an error |
 | `sse.test.ts` | frames split across network chunks; a malformed frame tearing down the stream |
 | `corpus.test.ts` | a de-dup key too loose (wrong paper's PDF) or too strict (de-dup never fires) |
-| `env.test.ts` | a Cloud Run revision starting with authentication silently disabled |
+| `env.test.ts` | a Cloud Run revision starting with authentication silently disabled; a wrong API key being accepted |
+| `citations.test.ts` | BibTeX that will not parse, and citation styles drifting from their rules |
 
 What is deliberately *not* covered: anything that needs the live Gemini API.
 Those shapes change out from under the code, and a mock of them would assert
