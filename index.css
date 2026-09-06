@@ -1,0 +1,53 @@
+/* Self-hosted; replaces the Google Fonts stylesheet the CDN build relied on. */
+@import '@fontsource/inter/300.css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource/merriweather/300.css';
+@import '@fontsource/merriweather/400.css';
+@import '@fontsource/merriweather/700.css';
+@import '@fontsource/merriweather/400-italic.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Default theme (Ocean). ProfileWorkspace rewrites these at runtime. */
+  --primary-50: 240 249 255;
+  --primary-100: 224 242 254;
+  --primary-200: 186 230 253;
+  --primary-300: 125 211 252;
+  --primary-400: 56 189 248;
+  --primary-500: 14 165 233;
+  --primary-600: 2 132 199;
+  --primary-700: 3 105 161;
+  --primary-800: 7 89 133;
+  --primary-900: 12 74 110;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--primary-200));
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--primary-400));
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Referenced by the workspace background decor. */
+.animation-delay-2000 { animation-delay: 2s; }
+.animation-delay-4000 { animation-delay: 4s; }
