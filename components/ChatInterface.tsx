@@ -6,12 +6,14 @@ import ReactMarkdown from 'react-markdown';
 interface ChatInterfaceProps {
   messages: Message[];
   onSendMessage: (text: string, useWebSearch?: boolean) => void;
+  /** How many papers are searchable. Zero means the library cannot ground anything yet. */
+  indexedCount?: number;
   isProcessing: boolean;
   readyToChat: boolean;
   onClose?: () => void;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isProcessing, readyToChat, onClose }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, isProcessing, readyToChat, onClose, indexedCount = 0 }) => {
   const [useWebSearch, setUseWebSearch] = useState(false);
   const [input, setInput] = useState('');
   const [isSearchVisible, setIsSearchVisible] = useState(false);
@@ -231,12 +233,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
             className={`px-2.5 py-1 rounded-full font-medium transition-colors border ${
               useWebSearch
                 ? 'bg-amber-50 text-amber-700 border-amber-200'
-                : 'bg-scholarly-50 text-scholarly-700 border-scholarly-200'
+                : indexedCount > 0
+                  ? 'bg-scholarly-50 text-scholarly-700 border-scholarly-200'
+                  : 'bg-slate-100 text-slate-500 border-slate-200'
             }`}
           >
-            {useWebSearch ? '🌐 Searching the web' : '📚 Using your library'}
+            {useWebSearch
+              ? '🌐 Searching the web'
+              : indexedCount > 0
+                ? `📚 Using your library (${indexedCount})`
+                : '📚 Library is empty'}
           </button>
-          <span className="text-slate-400">tap to switch</span>
+          <span className="text-slate-400">
+            {!useWebSearch && indexedCount === 0 ? 'press Generate to index papers' : 'tap to switch'}
+          </span>
         </div>
         <form onSubmit={handleSubmit} className="flex items-center gap-2 relative">
           <input

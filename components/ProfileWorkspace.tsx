@@ -324,7 +324,15 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
           fullResponse += chunk;
           updateBotMessage(botMsgId, fullResponse, true);
         },
-        undefined,
+        info => {
+          // Say plainly that nothing is indexed yet, rather than letting the
+          // model report an empty library as if the question were unanswerable.
+          if (info?.fellBack && info.pending) {
+            fullResponse +=
+              `\n\n---\n*Answered from the web: none of your ${info.pending} papers are indexed yet. ` +
+              `Select them and press **Generate** to make them searchable.*`;
+          }
+        },
         message => { fullResponse = fullResponse || `[${message}]`; },
         received => { citations = received; attachCitations(botMsgId, received); }
       );
@@ -616,6 +624,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
             <ChatInterface 
                 messages={chatMessages} 
                 onSendMessage={handleSendMessage}
+                indexedCount={papers.filter(p => p.fileSearchDocName).length}
                 isProcessing={isChatProcessing}
                 readyToChat={true}
                 onClose={() => setIsChatOpen(false)}

@@ -248,7 +248,14 @@ export const createRouter = () => {
     const profile = await owned(c, profileId);
     if (!profile) return c.json({ error: 'Not found' }, 404);
 
-    const grounded = !useWebSearch && !!profile.fileSearchStoreName;
+    // Papers only become searchable once they have been processed. Grounding an
+    // empty store just produces "nothing covers this topic", so fall back to the
+    // web and tell the client why.
+    const papers = await repo.listPapers(profileId);
+    const indexed = papers.filter(p => p.fileSearchDocName).length;
+    const emptyLibrary = indexed === 0;
+
+    const grounded = !useWebSearch && !!profile.fileSearchStoreName && !emptyLibrary;
     const tools = grounded
       ? [fileSearchTool([profile.fileSearchStoreName!])]
       : [googleSearchTool()];
@@ -312,7 +319,16 @@ User: ${message}`;
             data: JSON.stringify({ citations: [...citations.values()] }),
           });
         }
-        await stream.writeSSE({ event: 'done', data: JSON.stringify({ grounded }) });
+        await stream.writeSSE({
+          event: 'done',
+          data: JSON.stringify({
+            grounded,
+            // Distinguishes "you asked for the web" from "your library is empty".
+            fellBack: !grounded && !useWebSearch,
+            indexed,
+            pending: papers.length - indexed,
+          }),
+        });
       } catch (error: any) {
         console.error('Chat error:', error);
         await stream.writeSSE({

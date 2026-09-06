@@ -140,7 +140,7 @@ export const streamChat = (
   message: string,
   useWebSearch: boolean,
   onDelta: (text: string) => void,
-  onDone?: (info: { grounded: boolean }) => void,
+  onDone?: (info: { grounded: boolean; fellBack?: boolean; indexed?: number; pending?: number }) => void,
   onError?: (message: string) => void,
   onCitations?: (citations: Citation[]) => void
 ): Promise<void> =>
