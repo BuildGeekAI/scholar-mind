@@ -190,4 +190,11 @@ scripts/      live API verification spikes
 
 ## License
 
-MIT. Open source for educational and research purposes.
+[MIT](LICENSE). Use it, modify it, ship it — commercially or otherwise. The only
+condition is that the copyright notice travels with the code.
+
+Note that the third-party services ScholarMind calls carry their own terms:
+the [Gemini API](https://ai.google.dev/gemini-api/terms),
+[Unpaywall](https://unpaywall.org/legal), and
+[Crossref](https://www.crossref.org/documentation/retrieve-metadata/rest-api/).
+Only open-access full texts are ever retrieved.
