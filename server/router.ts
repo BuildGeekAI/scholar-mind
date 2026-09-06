@@ -273,6 +273,9 @@ User: ${message}`;
         });
 
         let full = '';
+        // File Search reports its sources as annotations on the delta events.
+        const citations = new Map<string, { fileName: string; documentUri: string; snippet: string }>();
+
         for await (const event of result) {
           const delta =
             event?.delta?.text ??
@@ -282,12 +285,28 @@ User: ${message}`;
             full += delta;
             await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: delta }) });
           }
+
+          for (const a of event?.delta?.annotations ?? event?.annotations ?? []) {
+            const fileName = a?.file_name;
+            if (!fileName || citations.has(fileName)) continue;
+            citations.set(fileName, {
+              fileName,
+              documentUri: a?.document_uri ?? '',
+              snippet: String(a?.source ?? '').replace(/\s+/g, ' ').trim().slice(0, 280),
+            });
+          }
         }
         if (!full) {
           // Fall back to a non-streamed turn if no deltas were recognised.
           const once = await ask({ input, tools });
           full = extractText(once);
           if (full) await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: full }) });
+        }
+        if (citations.size) {
+          await stream.writeSSE({
+            event: 'citations',
+            data: JSON.stringify({ citations: [...citations.values()] }),
+          });
         }
         await stream.writeSSE({ event: 'done', data: JSON.stringify({ grounded }) });
       } catch (error: any) {

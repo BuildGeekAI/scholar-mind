@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '../types';
-import { Send, Bot, User, Sparkles, Search, X, PanelRightClose, Mic, MicOff } from 'lucide-react';
+import { Send, Bot, User, Sparkles, Search, X, PanelRightClose, Mic, MicOff, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface ChatInterfaceProps {
@@ -186,6 +186,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
                 }`}
               >
                 <ReactMarkdown>{msg.content}</ReactMarkdown>
+
+                {/* Sources File Search actually retrieved for this answer. */}
+                {!!msg.citations?.length && (
+                  <details className="mt-3 pt-2 border-t border-slate-100">
+                    <summary className="text-xs font-medium text-slate-500 cursor-pointer hover:text-scholarly-600 select-none">
+                      {msg.citations.length} source{msg.citations.length === 1 ? '' : 's'} from your library
+                    </summary>
+                    <ul className="mt-2 space-y-2">
+                      {msg.citations.map((c, i) => (
+                        <li key={i} className="text-xs bg-slate-50 rounded-lg p-2 border border-slate-100">
+                          <div className="flex items-start gap-1.5 font-medium text-slate-700">
+                            <FileText className="w-3.5 h-3.5 shrink-0 mt-px text-scholarly-500" />
+                            <span className="line-clamp-2">{c.fileName}</span>
+                          </div>
+                          {c.snippet && (
+                            <p className="mt-1 text-slate-500 italic leading-snug line-clamp-3">“{c.snippet}”</p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </div>
 
               {msg.role === 'user' && (

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2 } from 'lucide-react';
-import { Paper, Message, ScholarData, AppState } from '../types';
+import { Citation, Paper, Message, ScholarData, AppState } from '../types';
 import * as api from '../services/api';
 import PaperList from './PaperList';
 import BlogReader from './BlogReader';
@@ -244,6 +244,10 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     ));
   };
 
+  const attachCitations = (id: string, citations: Citation[]) => {
+    setChatMessages(prev => prev.map(msg => (msg.id === id ? { ...msg, citations } : msg)));
+  };
+
   const handleSendMessage = useCallback(async (text: string, useWebSearch = false) => {
     if (!profile) return;
 
@@ -286,6 +290,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     }
 
     let fullResponse = "";
+    let citations: Citation[] = [];
     try {
       await api.streamChat(
         profile.id,
@@ -296,7 +301,8 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
           updateBotMessage(botMsgId, fullResponse, true);
         },
         undefined,
-        message => { fullResponse = fullResponse || `[${message}]`; }
+        message => { fullResponse = fullResponse || `[${message}]`; },
+        received => { citations = received; attachCitations(botMsgId, received); }
       );
     } catch (e: any) {
       fullResponse = fullResponse || `[${e.message || 'Chat failed'}]`;
@@ -305,7 +311,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     updateBotMessage(botMsgId, fullResponse, false);
     setIsChatProcessing(false);
     api.appendMessage(profile.id, {
-      id: botMsgId, role: 'model', content: fullResponse, timestamp: Date.now(),
+      id: botMsgId, role: 'model', content: fullResponse, timestamp: Date.now(), citations,
     }).catch(console.error);
   }, [profile, mergePaper, runPipeline]);
 

@@ -1,4 +1,4 @@
-import { Message, Paper } from '../types';
+import { Citation, Message, Paper } from '../types';
 
 export interface ProfileRecord {
   id: string;
@@ -141,10 +141,12 @@ export const streamChat = (
   useWebSearch: boolean,
   onDelta: (text: string) => void,
   onDone?: (info: { grounded: boolean }) => void,
-  onError?: (message: string) => void
+  onError?: (message: string) => void,
+  onCitations?: (citations: Citation[]) => void
 ): Promise<void> =>
   consumeSse('/chat', { profileId, message, useWebSearch }, {
     delta: d => onDelta(d?.text ?? ''),
+    citations: d => onCitations?.(d?.citations ?? []),
     done: d => onDone?.(d ?? { grounded: false }),
     error: d => onError?.(d?.message ?? 'Chat failed'),
   });

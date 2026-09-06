@@ -43,12 +43,21 @@ export interface Paper {
   fileSearchDocName?: string;
 }
 
+export interface Citation {
+  /** Display name of the indexed document the claim came from. */
+  fileName: string;
+  documentUri: string;
+  /** Excerpt of the source passage, trimmed for display. */
+  snippet: string;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'model';
   content: string;
   timestamp: number;
   isStreaming?: boolean;
+  citations?: Citation[];
 }
 
 export interface ScholarData {
