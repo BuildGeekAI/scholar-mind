@@ -5,6 +5,7 @@ import { resolveUser, User } from './identity';
 import { blobKey, createBlobStore, profilePrefix } from './blobStore';
 import * as repo from './repository';
 import { createStore, deleteDocument, deleteStore } from './fileSearch';
+import { scholarKey, scholarKeysFor } from './corpus';
 import { PipelineMode, processPapers } from './ingest';
 import { buildProfileZip, pcmToWav } from './export';
 import {
@@ -346,21 +347,62 @@ User: ${message}`;
   app.post('/profiles/:id/search', async c => {
     const profile = await owned(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
-    const { query } = await c.req.json().catch(() => ({ query: '' }));
+    const body = await c.req.json().catch(() => ({ query: '' }));
+    const { query, allowDuplicate } = body;
     if (!query?.trim()) return c.json({ error: 'query is required' }, 400);
+
+    /**
+     * Building a second library for a scholar the user already has means a
+     * second store, a second set of embeddings and a divided chat history — so
+     * it is surfaced rather than silently done. Small profile counts, so this
+     * filters in memory and needs no composite index.
+     */
+    const duplicateOf = async (keys: string[]) => {
+      if (allowDuplicate || !keys.length) return null;
+      const mine = await repo.listProfiles(c.get('user').id);
+      const match = mine.find(
+        p => p.id !== profile.id && (p.scholarKeys ?? []).some(k => keys.includes(k))
+      );
+      if (!match) return null;
+      return {
+        id: match.id,
+        title: match.title,
+        scholarName: match.scholarName,
+        paperCount: (await repo.listPapers(match.id)).length,
+      };
+    };
+
+    // Checked before the model call, so an obvious repeat costs nothing.
+    const fromQuery = scholarKey(query);
+    const earlyDuplicate = await duplicateOf(fromQuery ? [fromQuery] : []);
+    if (earlyDuplicate) {
+      return c.json({ error: 'You already have a library for this scholar.', duplicate: earlyDuplicate }, 409);
+    }
 
     try {
       const result = await searchScholarAndPapers(query);
+
+      // Checked again after resolution, which is what catches "G. Hinton"
+      // matching an existing "Geoffrey Hinton". Papers are not written until
+      // this passes, so a rejected search leaves nothing behind.
+      const keys = scholarKeysFor(query, result.name);
+      const duplicate = await duplicateOf(keys);
+      if (duplicate) {
+        return c.json({ error: 'You already have a library for this scholar.', duplicate }, 409);
+      }
+
       await repo.upsertPapers(profile.id, result.papers);
 
       // Name the profile after the scholar rather than leaving the raw query,
-      // which is often a Google Scholar URL.
-      const scholarName = result.name || query;
+      // which is often a Google Scholar URL. A URL must never become the name.
+      const scholarName =
+        result.name || (scholarKey(query)?.startsWith('name:') ? query : 'Unnamed scholar');
       const untitled = !profile.title || profile.title === 'Untitled profile';
       const updated = await repo.updateProfile(c.get('user').id, profile.id, {
         scholarName,
         affiliation: result.affiliation,
         topics: result.topics,
+        scholarKeys: keys,
         ...(untitled ? { title: scholarName } : {}),
       });
       return c.json({ profile: updated, papers: result.papers });

@@ -41,9 +41,11 @@ interface ProfileWorkspaceProps {
   profileId: string;
   onBack: () => void;
   onDelete: () => void;
+  /** Switches to an existing profile — used when a search turns out to duplicate one. */
+  onOpenProfile: (id: string) => void;
 }
 
-const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, onDelete }) => {
+const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, onDelete, onOpenProfile }) => {
   // Server-owned state
   const [profile, setProfile] = useState<api.ProfileRecord | null>(null);
   const [papers, setPapers] = useState<Paper[]>([]);
@@ -201,6 +203,51 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
      }
   };
 
+  const runSearch = async (query: string, allowDuplicate: boolean) => {
+    if (!profile) return;
+    const { profile: updated, papers: found } = await api.searchScholar(
+      profile.id,
+      query,
+      allowDuplicate
+    );
+    setProfile(updated);
+    if (updated.title && !looksLikeUrl(updated.title)) {
+      setTitle(updated.title);
+      savedRef.current = { title: updated.title, theme: currentTheme };
+    }
+    setPapers(found);
+    setSelectedPaperIds(new Set(found.map(p => p.id)));
+    setAppState(AppState.READY);
+  };
+
+  /**
+   * The server refuses a search that would build a second library for a scholar
+   * the user already has. Offer the existing one — a duplicate means a second
+   * store, a second set of embeddings and a split chat history — but let them
+   * override, because two libraries for one scholar is a legitimate thing to want.
+   */
+  const handleDuplicate = async (duplicate: api.DuplicateProfile) => {
+    const name = duplicate.scholarName || duplicate.title;
+    const openExisting = window.confirm(
+      `You already have a library for ${name}: "${duplicate.title}", ` +
+        `with ${duplicate.paperCount} paper${duplicate.paperCount === 1 ? '' : 's'}.\n\n` +
+        `OK — open that library instead.\n` +
+        `Cancel — build a second, separate library for the same scholar.`
+    );
+
+    if (!openExisting) {
+      await runSearch(scholarName, true);
+      return;
+    }
+
+    // This profile was created moments ago for a search that is not happening.
+    // Discard it rather than leaving an empty shell and an unused store behind.
+    if (profile && !papers.length && !chatMessages.length) {
+      api.deleteProfile(profile.id).catch(console.error);
+    }
+    onOpenProfile(duplicate.id);
+  };
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!scholarName.trim() || !profile) return;
@@ -209,16 +256,18 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     setSelectedPaperIds(new Set());
 
     try {
-      const { profile: updated, papers: found } = await api.searchScholar(profile.id, scholarName);
-      setProfile(updated);
-      if (updated.title && !looksLikeUrl(updated.title)) {
-        setTitle(updated.title);
-        savedRef.current = { title: updated.title, theme: currentTheme };
-      }
-      setPapers(found);
-      setSelectedPaperIds(new Set(found.map(p => p.id)));
-      setAppState(AppState.READY);
+      await runSearch(scholarName, false);
     } catch (error: any) {
+      const duplicate = error?.data?.duplicate as api.DuplicateProfile | undefined;
+      if (duplicate) {
+        try {
+          await handleDuplicate(duplicate);
+        } catch (retryError: any) {
+          setAppState(AppState.IDLE);
+          alert(retryError.message || 'Failed to find scholar info. Please try again.');
+        }
+        return;
+      }
       console.error(error);
       setAppState(AppState.IDLE);
       alert(error.message || 'Failed to find scholar info. Please try again.');

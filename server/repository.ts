@@ -14,6 +14,12 @@ export interface ProfileRecord {
   topics?: string[];
   /** Set once the profile's File Search store exists (Phase 2). */
   fileSearchStoreName?: string;
+  /**
+   * Every identity this profile's scholar is known by — the URL it was built
+   * from and the name that resolved to. Used to spot a second profile for a
+   * scholar the user already has a library for.
+   */
+  scholarKeys?: string[];
 }
 
 // Constructed lazily so that merely importing the router (as vite.config does)

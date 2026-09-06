@@ -43,6 +43,49 @@ export const canonicalKey = (paper: Pick<Paper, 'title'>): string => {
   return `${slug}-${digest}`;
 };
 
+/**
+ * A Google Scholar profile URL carries an exact identity in its `user`
+ * parameter, so two links to the same scholar collide even when the rest of the
+ * URL differs. Everything else falls back to the normalized name.
+ *
+ * A profile records every identity it is known by — the URL it was created from
+ * *and* the name that URL resolved to — so a library built from a link and one
+ * built from a typed name still recognise each other.
+ */
+export const scholarKey = (input: string): string | null => {
+  const trimmed = (input || '').trim();
+  if (!trimmed) return null;
+
+  const user = trimmed.match(/[?&]user=([A-Za-z0-9_-]+)/);
+  if (user) return `gs:${user[1]}`;
+
+  const normalized = normalizeTitle(trimmed).replace(/\s+/g, '-');
+  if (!normalized) return null;
+  return /^https?:|^www\./i.test(trimmed) ? `url:${normalized}` : `name:${normalized}`;
+};
+
+/**
+ * Middle names are the common miss: searching "G. E. Hinton" resolves to
+ * "Geoffrey Everest Hinton", which does not match an existing "Geoffrey
+ * Hinton". Reducing a name to its first and last token catches that.
+ *
+ * It deliberately over-matches — "John Smith" and "John Adam Smith" collide —
+ * because a duplicate is offered to the user, never forced on them.
+ */
+const shortNameKey = (key: string | null): string | null => {
+  if (!key?.startsWith('name:')) return null;
+  const parts = key.slice(5).split('-').filter(Boolean);
+  if (parts.length < 3) return null;
+  return `name:${parts[0]}-${parts[parts.length - 1]}`;
+};
+
+/** Every identity a search should register, from the raw query and what it resolved to. */
+export const scholarKeysFor = (query: string, resolvedName?: string): string[] => {
+  const direct = [scholarKey(query), resolvedName ? scholarKey(resolvedName) : null];
+  const all = [...direct, ...direct.map(shortNameKey)];
+  return [...new Set(all)].filter((k): k is string => !!k);
+};
+
 export interface CorpusHit {
   record: CorpusRecord;
   /** Cached PDF bytes, when the corpus holds them and they are still readable. */

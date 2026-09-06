@@ -83,6 +83,8 @@ Together these mean one shared index cannot be filtered down to one profile's pa
 
 **Papers are de-duplicated across profiles and owners, but embeddings are not.** `server/corpus.ts` keys papers by normalized title and caches the resolved source URL and the PDF bytes, so the second profile to index a paper skips resolution and download (10.6s → 5.2s measured). The embedding is repeated per profile because of the retrieval constraint above. The corpus holds only public open-access content — never anything profile-specific.
 
+**Duplicate scholar libraries are detected, not prevented.** A profile records every identity its scholar is known by (`scholarKeys`) — the Google Scholar `user=` id, the normalized name, and a first-plus-last-token form that survives middle names. `POST /profiles/:id/search` checks cheaply before the model call and again after resolution, returning `409 {duplicate}`; `allowDuplicate: true` overrides. Papers are not written until the check passes, so a rejected search leaves nothing behind.
+
 **Indexing and artifact generation are separate operations,** behind separate buttons and separate status fields (`indexStatus` vs `status`). Indexing is seconds and is what chat needs; generation is a minute and is what reading needs. Neither may clobber the other's state.
 
 **One paper per Firestore document.** Papers and messages are subcollections. The pre-rewrite design kept everything in one profile object, so editing a title rewrote the whole library.
