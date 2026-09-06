@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Paper } from '../types';
-import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Download, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2 } from 'lucide-react';
+import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2, Database } from 'lucide-react';
 import { playAudioUrl, stopAudio } from '../utils/audio';
 import { blobUrl } from '../services/api';
 
@@ -9,32 +9,53 @@ interface PaperListProps {
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   onSelectAll: () => void;
+  /** Embeds the paper into the profile's search index, for grounded chat. */
+  onIndex: () => void;
+  /** Writes the blog, slides, quiz, flashcards, audio and illustration. */
   onGenerate: () => void;
+  busy: boolean;
   onReadBlog: (paper: Paper) => void;
   onFetchCitations: (paper: Paper) => void;
 }
 
-/** Where each pipeline step sits on the card's progress bar. */
-const STAGES: Record<string, { label: string; percent: number }> = {
-  resolving: { label: 'Finding the paper', percent: 12 },
-  fetching:  { label: 'Downloading PDF',   percent: 30 },
-  indexing:  { label: 'Indexing full text', percent: 48 },
-  writing:   { label: 'Writing blog & slides', percent: 72 },
-  media:     { label: 'Generating audio & art', percent: 90 },
+type Stage = { label: string; percent: number };
+
+/**
+ * The two halves of the pipeline run separately, so each has its own progress
+ * scale — an index run must not stall the bar at the point where generation
+ * would only be starting.
+ */
+const INDEX_STAGES: Record<string, Stage> = {
+  resolving: { label: 'Finding the paper', percent: 20 },
+  fetching:  { label: 'Downloading PDF', percent: 55 },
+  indexing:  { label: 'Building embeddings', percent: 85 },
 };
 
-const stageOf = (paper: Paper) =>
-  STAGES[paper.stage ?? ''] ??
-  (paper.status === 'downloading'
-    ? STAGES.resolving
-    : { label: 'Working', percent: 60 });
+const ARTIFACT_STAGES: Record<string, Stage> = {
+  resolving: { label: 'Finding the paper', percent: 12 },
+  fetching:  { label: 'Downloading PDF', percent: 25 },
+  writing:   { label: 'Writing blog & slides', percent: 60 },
+  media:     { label: 'Generating audio & art', percent: 85 },
+  indexing:  { label: 'Refreshing the index', percent: 95 },
+};
+
+const isIndexing = (paper: Paper) => paper.indexStatus === 'indexing';
+const isGenerating = (paper: Paper) =>
+  paper.status === 'downloading' || paper.status === 'processing';
+
+const stageOf = (paper: Paper): Stage => {
+  const stages = isGenerating(paper) ? ARTIFACT_STAGES : INDEX_STAGES;
+  return stages[paper.stage ?? ''] ?? { label: 'Working', percent: 40 };
+};
 
 const PaperList: React.FC<PaperListProps> = ({ 
     papers, 
     selectedIds, 
     onToggleSelect, 
     onSelectAll, 
+    onIndex,
     onGenerate,
+    busy,
     onReadBlog, 
     onFetchCitations 
 }) => {
@@ -157,13 +178,26 @@ const PaperList: React.FC<PaperListProps> = ({
              )}
              
              {selectedIds.size > 0 && (
-                 <button
-                    onClick={onGenerate}
-                    className="flex items-center gap-2 bg-scholarly-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-scholarly-700 transition-all shadow-md shadow-scholarly-200 active:scale-95 animate-in fade-in zoom-in"
-                 >
-                    <Wand2 className="w-4 h-4" />
-                    Generate ({selectedIds.size})
-                 </button>
+                 <div className="flex items-center gap-2 animate-in fade-in zoom-in">
+                     <button
+                        onClick={onIndex}
+                        disabled={busy}
+                        title="Embed these papers into the search index so chat can cite them"
+                        className="flex items-center gap-2 bg-white text-slate-700 border border-slate-200 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                     >
+                        <Database className="w-4 h-4 text-emerald-600" />
+                        Index ({selectedIds.size})
+                     </button>
+                     <button
+                        onClick={onGenerate}
+                        disabled={busy}
+                        title="Write the blog, slides, quiz, audio and illustration"
+                        className="flex items-center gap-2 bg-scholarly-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-scholarly-700 transition-all shadow-md shadow-scholarly-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                     >
+                        <Wand2 className="w-4 h-4" />
+                        Generate ({selectedIds.size})
+                     </button>
+                 </div>
              )}
          </div>
 
@@ -213,7 +247,11 @@ const PaperList: React.FC<PaperListProps> = ({
         <div className="grid grid-cols-1 gap-4">
         {filteredPapers.map((paper) => {
           const isSelected = selectedIds.has(paper.id);
-          const isProcessing = paper.status === 'downloading' || paper.status === 'processing';
+          const generating = isGenerating(paper);
+          const indexing = isIndexing(paper);
+          const isProcessing = generating || indexing;
+          // Papers indexed before indexStatus existed still carry a document name.
+          const indexed = !indexing && (paper.indexStatus === 'indexed' || !!paper.fileSearchDocName);
 
           return (
           <div 
@@ -225,7 +263,7 @@ const PaperList: React.FC<PaperListProps> = ({
             <div className="absolute bottom-0 left-0 w-full h-1">
                <div 
                  className={`h-full transition-all duration-1000 ease-in-out ${
-                   paper.status === 'downloading' ? 'bg-scholarly-400' : 'bg-purple-500'
+                   generating ? 'bg-purple-500' : 'bg-emerald-500'
                  }`}
                  style={{ width: `${stageOf(paper).percent}%` }}
                >
@@ -265,13 +303,13 @@ const PaperList: React.FC<PaperListProps> = ({
               </div>
             ) : isProcessing ? (
                <div className="hidden sm:flex w-32 h-24 shrink-0 rounded-xl bg-slate-50 border border-slate-100 items-center justify-center flex-col gap-2">
-                 {paper.status === 'downloading' ? (
-                    <Download className="w-6 h-6 animate-bounce text-scholarly-400" />
-                 ) : (
+                 {generating ? (
                     <Sparkles className="w-6 h-6 animate-pulse text-purple-500" />
+                 ) : (
+                    <Database className="w-6 h-6 animate-pulse text-emerald-500" />
                  )}
                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    {paper.status === 'downloading' ? 'Fetching' : 'AI Magic'}
+                    {generating ? 'AI Magic' : 'Indexing'}
                  </span>
                </div>
             ) : null}
@@ -317,12 +355,12 @@ const PaperList: React.FC<PaperListProps> = ({
                         <div className="bg-red-100 p-1 rounded-full">
                          <AlertCircle className="w-4 h-4 text-red-500" />
                        </div>
-                     ) : paper.status === 'downloading' ? (
+                     ) : indexing ? (
                        <div className="relative">
-                         <div className="absolute inset-0 bg-scholarly-200 rounded-full animate-ping opacity-75"></div>
-                         <Download className="relative w-5 h-5 text-scholarly-600" />
+                         <div className="absolute inset-0 bg-emerald-200 rounded-full animate-ping opacity-75"></div>
+                         <Database className="relative w-5 h-5 text-emerald-600" />
                        </div>
-                     ) : paper.status === 'processing' ? (
+                     ) : generating ? (
                        <div className="relative">
                          <div className="absolute inset-0 bg-purple-200 rounded-full animate-ping opacity-75"></div>
                          <Sparkles className="relative w-5 h-5 text-purple-600" />
@@ -376,25 +414,34 @@ const PaperList: React.FC<PaperListProps> = ({
               </div>
               
               <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-slate-100/50">
-                {paper.status === 'discovered' && (
+                {/* Indexing state is independent of generation, so it gets its own chip. */}
+                {indexed && (
+                   <span
+                     className="text-xs flex items-center gap-1.5 text-emerald-700 font-semibold px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-100"
+                     title={paper.indexedKind === 'summary'
+                       ? 'No open-access PDF, so the write-up was embedded instead'
+                       : 'Full text embedded — chat can cite this paper'}
+                   >
+                     <Database className="w-3 h-3" />
+                     {paper.indexedKind === 'summary' ? 'Indexed (summary)' : 'Indexed'}
+                   </span>
+                )}
+                {paper.indexStatus === 'error' && !indexed && !indexing && (
+                   <span className="text-xs flex items-center gap-1.5 text-amber-700 font-semibold px-2.5 py-1 rounded-full bg-amber-50 border border-amber-100">
+                     <AlertCircle className="w-3 h-3" /> Not indexed
+                   </span>
+                )}
+                {paper.status === 'discovered' && !isProcessing && (
                    <span className="text-xs flex items-center gap-1.5 text-slate-400 font-medium px-2 py-1 rounded-full bg-slate-50 border border-slate-100">
                      <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span> Ready to Analyze
                    </span>
                 )}
                 {isProcessing && (
-                  <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                  <span className={`text-xs flex items-center gap-1.5 font-bold px-2 py-1 rounded-full ${
+                    generating ? 'text-purple-600 bg-purple-50' : 'text-emerald-700 bg-emerald-50'
+                  }`}>
                     <Loader2 className="w-3 h-3 animate-spin" /> {stageOf(paper).label}
                   </span>
-                )}
-                {false && paper.status === 'downloading' && (
-                   <span className="text-xs flex items-center gap-1.5 text-scholarly-600 font-bold px-2 py-1 rounded-full bg-scholarly-50">
-                     <Loader2 className="w-3 h-3 animate-spin" /> Fetching Metadata
-                   </span>
-                )}
-                {paper.status === 'processing' && (
-                   <span className="text-xs flex items-center gap-1.5 text-purple-600 font-bold px-2 py-1 rounded-full bg-purple-50">
-                     <Loader2 className="w-3 h-3 animate-spin" /> Generating Assets
-                   </span>
                 )}
                 {paper.status === 'converted' && (
                   <>

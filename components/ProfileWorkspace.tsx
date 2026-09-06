@@ -67,8 +67,8 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   // Selection State
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(new Set());
 
-  // Ids in the current generation batch, so overall progress can be reported.
-  const [batchIds, setBatchIds] = useState<string[]>([]);
+  // The current batch: which papers, and which half of the pipeline is running.
+  const [batch, setBatch] = useState<{ ids: string[]; mode: api.PipelineMode } | null>(null);
 
   // Load everything for this profile from the server.
   useEffect(() => {
@@ -135,17 +135,25 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     }
   }, [currentTheme]);
 
-  const isAnyProcessing = useMemo(
-    () => papers.some(p => p.status === 'downloading' || p.status === 'processing'),
-    [papers]
+  const isBusy = useCallback(
+    (p: Paper) =>
+      p.status === 'downloading' || p.status === 'processing' || p.indexStatus === 'indexing',
+    []
   );
 
+  const isAnyProcessing = useMemo(() => papers.some(isBusy), [papers, isBusy]);
+
   const batchProgress = useMemo(() => {
-    if (!batchIds.length) return null;
-    const inBatch = papers.filter(p => batchIds.includes(p.id));
-    const settled = inBatch.filter(p => p.status === 'converted' || p.status === 'error').length;
-    return { done: settled, total: batchIds.length, percent: (settled / batchIds.length) * 100 };
-  }, [papers, batchIds]);
+    if (!batch?.ids.length) return null;
+    const inBatch = papers.filter(p => batch.ids.includes(p.id));
+    const settled = inBatch.filter(p => !isBusy(p)).length;
+    return {
+      done: settled,
+      total: batch.ids.length,
+      percent: (settled / batch.ids.length) * 100,
+      label: batch.mode === 'index' ? 'Indexing' : 'Processing',
+    };
+  }, [papers, batch, isBusy]);
 
   const mergePaper = useCallback((incoming: Paper) => {
     setPapers(prev => {
@@ -219,16 +227,16 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   };
 
   /** The server owns the pipeline; this only streams progress back into state. */
-  const runPipeline = useCallback(async (ids: string[]) => {
+  const runPipeline = useCallback(async (ids: string[], mode: api.PipelineMode) => {
     if (!profile || !ids.length) return;
-    setBatchIds(ids);
+    setBatch({ ids, mode });
     try {
-      await api.processPapers(profile.id, ids, mergePaper, undefined, message => alert(message));
+      await api.processPapers(profile.id, ids, mode, mergePaper, undefined, message => alert(message));
     } catch (error: any) {
       console.error(error);
       alert(error.message || 'Processing failed.');
     } finally {
-      setBatchIds([]);
+      setBatch(null);
     }
   }, [profile, mergePaper]);
 
@@ -247,9 +255,10 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     else setSelectedPaperIds(new Set(allIds));
   };
 
-  const handleGenerateSelected = () => {
-    runPipeline(papers.filter(p => selectedPaperIds.has(p.id)).map(p => p.id));
-  };
+  const selectedIds = () => papers.filter(p => selectedPaperIds.has(p.id)).map(p => p.id);
+
+  const handleIndexSelected = () => runPipeline(selectedIds(), 'index');
+  const handleGenerateSelected = () => runPipeline(selectedIds(), 'artifacts');
 
   const handleFetchCitations = async (paper: Paper) => {
     if (!profile) return;
@@ -303,7 +312,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
         const newPaper = await api.findPaper(profile.id, query);
         mergePaper(newPaper);
         updateBotMessage(botMsgId, `Found "${newPaper.title}". Generating resources...`, true);
-        await runPipeline([newPaper.id]);
+        await runPipeline([newPaper.id], 'both');
         updateBotMessage(botMsgId, `Successfully analyzed "${newPaper.title}". You can now read the blog or ask questions about it.`, false);
       } catch (e: any) {
         updateBotMessage(botMsgId, e.message || 'Error processing request.', false);
@@ -330,7 +339,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
           if (info?.fellBack && info.pending) {
             fullResponse +=
               `\n\n---\n*Answered from the web: none of your ${info.pending} papers are indexed yet. ` +
-              `Select them and press **Generate** to make them searchable.*`;
+              `Select them and press **Index** to make them searchable.*`;
           }
         },
         message => { fullResponse = fullResponse || `[${message}]`; },
@@ -555,7 +564,9 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
             selectedIds={selectedPaperIds}
             onToggleSelect={handleToggleSelect}
             onSelectAll={handleSelectAll}
+            onIndex={handleIndexSelected}
             onGenerate={handleGenerateSelected}
+            busy={isAnyProcessing}
             onReadBlog={setActivePaper} 
             onFetchCitations={handleFetchCitations}
           />
@@ -571,8 +582,8 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
                 </div>
                 <span className="font-medium tracking-wide text-sm flex-1 min-w-0">
                   {batchProgress
-                    ? `Processing ${batchProgress.done} of ${batchProgress.total} papers`
-                    : 'Generating assets…'}
+                    ? `${batchProgress.label} ${batchProgress.done} of ${batchProgress.total} papers`
+                    : 'Working…'}
                 </span>
                 {batchProgress && (
                   <span className="text-xs font-mono text-scholarly-300 tabular-nums shrink-0">
@@ -593,7 +604,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
              {/* What each in-flight paper is doing right now. */}
              <div className="mt-3 space-y-1.5 max-h-24 overflow-y-auto">
                {papers
-                 .filter(p => p.status === 'downloading' || p.status === 'processing')
+                 .filter(isBusy)
                  .slice(0, 3)
                  .map(p => (
                    <div key={p.id} className="flex items-center gap-2 text-xs text-white/70">

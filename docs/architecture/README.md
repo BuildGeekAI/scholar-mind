@@ -162,6 +162,24 @@ Any grounded structured generation needs two calls. See `generatePaperResources`
 
 ## Ingestion
 
+`POST /profiles/:id/process` carries a `mode`, and the pipeline has two halves
+that run independently:
+
+| `mode` | Runs | Costs | Writes |
+| --- | --- | --- | --- |
+| `index` | resolve → fetch → embed | ~5–10s, one upload | `fileSearchDocName`, `indexStatus` |
+| `artifacts` | grounded notes → structure → media | ~1min, five model calls | `blogContent`, `slides`, `quiz`, `audioKey`, `illustrationKey` |
+| `both` | index, then artifacts, then re-index | the sum | all of the above |
+
+They were one button. Splitting them follows from the cost asymmetry above:
+making a library searchable is cheap and is what chat needs, while generating a
+study module is slow and is what reading needs. Users want either without
+waiting for the other.
+
+Each half owns its own status field — `indexStatus` and `status` — so indexing a
+finished paper does not hide its **Read** button, and generating does not clear
+its **Indexed** badge.
+
 ```mermaid
 sequenceDiagram
     participant C as Client
@@ -173,31 +191,38 @@ sequenceDiagram
     participant F as File Search
     participant G as Gemini
 
-    C->>R: POST /profiles/:id/process
+    C->>R: POST /profiles/:id/process {mode}
     R->>I: processPapers (SSE)
 
-    I->>PS: resolve open-access URL
-    PS->>W: arXiv → Crossref → Unpaywall
-    alt no PDF found
-        PS-->>I: unavailable
-    else URL resolved
-        I->>W: fetch PDF
-        alt bot-blocked or paywalled
-            W-->>I: HTML, not PDF
-        else
+    opt mode includes index
+        I->>B: cached PDF?
+        I->>PS: resolve open-access URL
+        PS->>W: arXiv → Crossref → Unpaywall
+        alt PDF retrieved
             I->>B: store bytes
-            I->>F: index full text
+            I->>F: embed full text
+        else no PDF, or bot-blocked
+            I->>F: embed abstract + write-up
         end
+        I->>F: delete the superseded document
     end
 
-    I->>G: stage 1 — grounded notes
-    I->>G: stage 2 — structure them
-    I->>G: speech + illustration
-    I->>B: store audio + image
+    opt mode includes artifacts
+        I->>G: stage 1 — grounded notes
+        I->>G: stage 2 — structure them
+        I->>G: speech + illustration
+        I->>B: store audio + image
+    end
+
     I-->>C: stage events throughout
 ```
 
-**Everything degrades, nothing blocks.** No PDF falls back to URL context, then to search grounding. When no PDF can be indexed, the *generated write-up* is indexed instead, so the library stays searchable even for paywalled sources. One bad paper cannot abort a run.
+**Everything degrades, nothing blocks.** No PDF falls back to URL context, then to search grounding. When no PDF can be indexed, the abstract — and the *generated write-up*, once one exists — is indexed instead, so the library stays searchable even for paywalled sources. One bad paper cannot abort a run.
+
+Re-indexing replaces rather than accumulates: the previous document is deleted
+with `force: true`, since the API refuses to delete a document that still has
+chunks. A paper first indexed from its abstract therefore upgrades cleanly to
+its full text.
 
 ---
 

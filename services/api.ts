@@ -122,14 +122,18 @@ const consumeSse = async (path: string, body: unknown, handlers: SseHandlers): P
   }
 };
 
+/** 'index' makes papers searchable; 'artifacts' writes the blog, slides and media. */
+export type PipelineMode = 'index' | 'artifacts' | 'both';
+
 export const processPapers = (
   profileId: string,
   paperIds: string[],
+  mode: PipelineMode,
   onPaper: (paper: Paper) => void,
   onDone?: () => void,
   onError?: (message: string) => void
 ): Promise<void> =>
-  consumeSse(`/profiles/${profileId}/process`, { paperIds }, {
+  consumeSse(`/profiles/${profileId}/process`, { paperIds, mode }, {
     paper: onPaper,
     done: () => onDone?.(),
     error: d => onError?.(d?.message ?? 'Processing failed'),

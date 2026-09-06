@@ -37,7 +37,7 @@ server/
   gemini.ts       model calls, prompts, schemas, response extraction
   fileSearch.ts   per-profile store lifecycle
   paperSource.ts  open-access PDF resolution
-  ingest.ts       per-paper pipeline
+  ingest.ts       per-paper pipeline; `mode` selects index, artifacts, or both
   export.ts       ZIP + pcmToWav
 services/api.ts   the browser's only server interface
 ```
@@ -58,6 +58,12 @@ These were found by testing the live API. Each cost a debugging session.
 
 **Illustrations are JPEG, not PNG.** Store and serve the real mime type — the old code hard-coded `data:image/png`.
 
+**Deleting an indexed document needs `force: true`.** Without it the API returns `400 'Cannot delete non-empty Document'` — the chunks it was split into count as children. Same shape as store deletion.
+
+**Firestore merge writes cannot clear a field.** `ignoreUndefinedProperties` makes the client drop undefined keys, so `set({stage: undefined}, {merge:true})` leaves the old value in place. `repository.withDeletions` maps the pipeline's transient fields to `FieldValue.delete()`.
+
+**`{ ...current, ...(await f()) }` snapshots too early.** Object-literal properties evaluate left to right, so `...current` is copied *before* the await resolves — any mutation `f` made to `current` in the meantime is discarded. `processPaper` binds the patch to a variable first, or every `setStage` inside a run is silently reverted.
+
 ## Conventions
 
 **Error contracts are load-bearing.** Scholar search re-throws so the UI can surface it. Citations, speech, and illustration return empty. Generation returns a placeholder rather than throwing, so one bad paper cannot abort a run. Preserve these.
@@ -65,6 +71,8 @@ These were found by testing the live API. Each cost a debugging session.
 **Everything degrades.** No PDF falls back to URL context, then to search grounding. A missing artifact must never block a paper.
 
 **Bytes never enter React state or Firestore.** `Paper` carries `illustrationKey` / `audioKey` / `pdfKey`; `/api/blobs/*` checks ownership against the profile ID embedded in the key, so a key alone is not a capability.
+
+**Indexing and artifact generation are separate operations,** behind separate buttons and separate status fields (`indexStatus` vs `status`). Indexing is seconds and is what chat needs; generation is a minute and is what reading needs. Neither may clobber the other's state.
 
 **One paper per Firestore document.** Papers and messages are subcollections. The pre-rewrite design kept everything in one profile object, so editing a title rewrote the whole library.
 

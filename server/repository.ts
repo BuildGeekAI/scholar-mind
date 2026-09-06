@@ -1,4 +1,4 @@
-import { Firestore } from '@google-cloud/firestore';
+import { FieldValue, Firestore } from '@google-cloud/firestore';
 import { Message, Paper } from '../types';
 
 export interface ProfileRecord {
@@ -114,14 +114,29 @@ export const listPapers = async (profileId: string): Promise<Paper[]> => {
 };
 
 /** One paper per document — the whole point of the subcollection split. */
+/**
+ * ignoreUndefinedProperties makes a merge write skip undefined keys, so clearing
+ * a field would silently keep its old value. The pipeline's transient fields
+ * must actually disappear when a paper settles.
+ */
+const CLEARABLE: (keyof Paper)[] = ['stage'];
+
+const withDeletions = (paper: Paper): Record<string, unknown> => {
+  const payload: Record<string, unknown> = { ...paper };
+  for (const key of CLEARABLE) {
+    if (payload[key] === undefined) payload[key] = FieldValue.delete();
+  }
+  return payload;
+};
+
 export const upsertPaper = async (profileId: string, paper: Paper): Promise<void> => {
-  await papersOf(profileId).doc(paper.id).set(paper, { merge: true });
+  await papersOf(profileId).doc(paper.id).set(withDeletions(paper), { merge: true });
 };
 
 export const upsertPapers = async (profileId: string, papers: Paper[]): Promise<void> => {
   if (!papers.length) return;
   const batch = db().batch();
-  papers.forEach(p => batch.set(papersOf(profileId).doc(p.id), p, { merge: true }));
+  papers.forEach(p => batch.set(papersOf(profileId).doc(p.id), withDeletions(p), { merge: true }));
   await batch.commit();
 };
 
