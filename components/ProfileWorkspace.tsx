@@ -5,6 +5,7 @@ import { Theme } from './theme';
 import * as api from '../services/api';
 import PaperList from './PaperList';
 import BlogReader from './BlogReader';
+import CiteDialog from './CiteDialog';
 import ChatInterface from './ChatInterface';
 
 
@@ -31,6 +32,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   const [manualPaperTitle, setManualPaperTitle] = useState('');
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [activePaper, setActivePaper] = useState<Paper | null>(null);
+  const [citingPaper, setCitingPaper] = useState<Paper | null>(null);
   const [isChatProcessing, setIsChatProcessing] = useState(false);
 
   // UI States
@@ -677,6 +679,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
             busy={isAnyProcessing}
             onReadBlog={setActivePaper} 
             onFetchCitations={handleFetchCitations}
+            onCite={setCitingPaper}
           />
         </div>
 
@@ -762,6 +765,14 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
             <MessageSquare className="w-6 h-6 group-hover:rotate-12 transition-transform" />
             <span className="sr-only">Open Chat</span>
          </button>
+      )}
+
+      {citingPaper && (
+        <CiteDialog
+          profileId={profile.id}
+          paperId={citingPaper.id}
+          onClose={() => setCitingPaper(null)}
+        />
       )}
 
       {/* Blog Modal */}

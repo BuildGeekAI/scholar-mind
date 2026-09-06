@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Paper } from '../types';
-import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2, Database, Youtube, Globe, Library, Mic, Video, FileType } from 'lucide-react';
+import { FileText, Loader2, CheckCircle, AlertCircle, BookOpen, MonitorPlay, Play, Filter, X, Sparkles, Square, Quote, ChevronDown, ChevronUp, CheckSquare, Square as SquareIcon, Wand2, Database, Youtube, Globe, Library, Mic, Video, FileType, Quote as QuoteIcon } from 'lucide-react';
 import { playAudioUrl, stopAudio } from '../utils/audio';
 import { blobUrl } from '../services/api';
 
@@ -16,6 +16,7 @@ interface PaperListProps {
   busy: boolean;
   onReadBlog: (paper: Paper) => void;
   onFetchCitations: (paper: Paper) => void;
+  onCite: (paper: Paper) => void;
 }
 
 type Stage = { label: string; percent: number };
@@ -70,7 +71,8 @@ const PaperList: React.FC<PaperListProps> = ({
     onGenerate,
     busy,
     onReadBlog, 
-    onFetchCitations 
+    onFetchCitations,
+    onCite
 }) => {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState<string>('All Years');
@@ -519,6 +521,13 @@ const PaperList: React.FC<PaperListProps> = ({
                     )}
                   </>
                 )}
+                <button
+                  onClick={() => onCite(paper)}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-muted bg-panel border border-line hover:text-ink hover:border-scholarly-300 px-3 py-2 rounded-xl transition-all"
+                  title="Copy a citation in BibTeX, APA, MLA, Chicago, Harvard or RIS"
+                >
+                  <QuoteIcon className="w-3.5 h-3.5" /> Cite
+                </button>
                 {paper.status === 'error' && (
                    <span className="text-xs flex items-center gap-1 text-red-500 dark:text-red-300 font-medium">
                      <AlertCircle className="w-3 h-3" /> Failed

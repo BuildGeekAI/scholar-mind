@@ -16,6 +16,13 @@ import {
 import { PipelineMode, processPapers } from './ingest';
 import { buildProfileZip, pcmToWav } from './export';
 import {
+  CitationStyle,
+  STYLES,
+  formatBibliography,
+  formatCitation,
+  lookupCitationMeta,
+} from './citations';
+import {
   ask,
   extractText,
   fileSearchTool,
@@ -681,6 +688,79 @@ User: ${message}`;
           data: JSON.stringify({ message: error?.message ?? 'Processing failed' }),
         });
       }
+    });
+  });
+
+  // --- Citations -----------------------------------------------------------
+  // Formatted from stored metadata, enriched once from Crossref. Never from the
+  // model: an invented volume number reads as authoritative and gets pasted
+  // into somebody's bibliography.
+  const parseStyle = (raw: string | undefined): CitationStyle | null => {
+    const style = (raw || 'bibtex').toLowerCase() as CitationStyle;
+    return STYLES.includes(style) ? style : null;
+  };
+
+  /** Fills in DOI, journal, volume and pages the first time they are asked for. */
+  const enrich = async (profileId: string, papers: Paper[]): Promise<Paper[]> =>
+    Promise.all(
+      papers.map(async paper => {
+        if (paper.citationMeta || (paper.kind ?? 'paper') !== 'paper') return paper;
+        const citationMeta = await lookupCitationMeta(paper.title);
+        if (!citationMeta) return paper;
+        const updated = { ...paper, citationMeta };
+        await repo.upsertPaper(profileId, updated).catch(() => {});
+        return updated;
+      })
+    );
+
+  app.get('/profiles/:id/citations', async c => {
+    const profile = await owned(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+
+    const style = parseStyle(c.req.query('style'));
+    if (!style) {
+      return c.json({ error: `style must be one of: ${STYLES.join(', ')}` }, 400);
+    }
+
+    const papers = await enrich(profile.id, await repo.listPapers(profile.id));
+    const now = new Date();
+    const text = formatBibliography(papers, style, now);
+
+    if (c.req.query('download')) {
+      const extension = style === 'bibtex' ? 'bib' : style === 'ris' ? 'ris' : 'txt';
+      return c.body(text, 200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${profile.title.replace(/[^\w.-]+/g, '-')}.${extension}"`,
+      });
+    }
+
+    return c.json({
+      style,
+      count: papers.length,
+      text,
+      entries: papers.map(p => ({ id: p.id, title: p.title, citation: formatCitation(p, style, now) })),
+    });
+  });
+
+  app.get('/profiles/:id/papers/:paperId/citation', async c => {
+    const profile = await owned(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+
+    const style = parseStyle(c.req.query('style'));
+    if (!style) return c.json({ error: `style must be one of: ${STYLES.join(', ')}` }, 400);
+
+    const papers = await repo.listPapers(profile.id);
+    const paper = papers.find(p => p.id === c.req.param('paperId'));
+    if (!paper) return c.json({ error: 'Not found' }, 404);
+
+    const [enriched] = await enrich(profile.id, [paper]);
+    // Every style for one source: the picker switches without a round trip.
+    const now = new Date();
+    return c.json({
+      id: enriched.id,
+      title: enriched.title,
+      hasBibliographicData: !!enriched.citationMeta,
+      citations: Object.fromEntries(STYLES.map(s => [s, formatCitation(enriched, s, now)])),
     });
   });
 

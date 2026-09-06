@@ -124,6 +124,31 @@ export const blobUrl = (key?: string): string | undefined => (key ? `/api/blobs/
 
 export const exportUrl = (profileId: string): string => `/api/profiles/${profileId}/export`;
 
+// --- Citations --------------------------------------------------------------
+export type CitationStyle = 'bibtex' | 'apa' | 'mla' | 'chicago' | 'harvard' | 'ris';
+
+export const CITATION_STYLES: CitationStyle[] = ['bibtex', 'apa', 'mla', 'chicago', 'harvard', 'ris'];
+
+export interface PaperCitations {
+  id: string;
+  title: string;
+  /** False when Crossref had no matching record, so fields are thin but honest. */
+  hasBibliographicData: boolean;
+  citations: Record<CitationStyle, string>;
+}
+
+export const paperCitations = (profileId: string, paperId: string): Promise<PaperCitations> =>
+  send(`/profiles/${profileId}/papers/${paperId}/citation`, 'GET');
+
+export const bibliography = (
+  profileId: string,
+  style: CitationStyle
+): Promise<{ style: CitationStyle; count: number; text: string }> =>
+  send(`/profiles/${profileId}/citations?style=${style}`, 'GET');
+
+export const bibliographyUrl = (profileId: string, style: CitationStyle): string =>
+  `/api/profiles/${profileId}/citations?style=${style}&download=1`;
+
 export const speak = async (text: string, voice: string): Promise<Blob | null> => {
   const res = await fetch('/api/tts', {
     method: 'POST',
