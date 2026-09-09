@@ -1,4 +1,5 @@
 import './env';
+import { createServer } from 'node:http';
 import { hostname } from 'node:os';
 import { Ctx } from './authz';
 import { createBlobStore } from './blobStore';
@@ -265,6 +266,35 @@ const shutdown = async (signal: string): Promise<void> => {
 
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
+
+/**
+ * Cloud Run will not start a service that does not listen on $PORT, and it
+ * health-checks that port before sending any traffic. The worker takes its work
+ * from the queue rather than from HTTP, so this exists purely to satisfy the
+ * platform — and, usefully, to report whether the loop is actually running.
+ *
+ * Running the worker anywhere else (a laptop, a container, a VM) does not need
+ * it, which is why the port is optional.
+ */
+const startHealthServer = (): void => {
+  const port = Number(process.env.PORT);
+  if (!port) return;
+
+  createServer((req, res) => {
+    const healthy = !stopping;
+    res.writeHead(healthy ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        ok: healthy,
+        worker: WORKER_ID,
+        inFlight: inFlight.size,
+        draining: stopping,
+      })
+    );
+  }).listen(port, () => console.log(`Worker health endpoint on :${port}`));
+};
+
+startHealthServer();
 
 console.log(`Worker ${WORKER_ID} starting (concurrency ${CONCURRENCY}).`);
 loop().catch(async e => {
