@@ -1,142 +1,67 @@
+<div align="center">
+
 # 🎓 ScholarMind
 
-Collect what you are trying to understand — papers, articles, Wikipedia,
-YouTube, recordings, your own documents — and ScholarMind reads all of it, makes
-it searchable, and answers questions with citations back to the source.
+**Read a scholar's work. Then ask it questions.**
 
-It will also write the blog post, the slides, the quiz, the flashcards, the
-narration and the cover art, when you want to *learn* the material rather than
-just search it. Every Gemini call is server-side; the browser holds no key and
-no state.
+Point it at a researcher and it assembles their published work into a library
+you can interrogate — grounded in what they actually wrote, with the passage
+behind every answer.
+
+[Features](docs/general/features.md) ·
+[Architecture](docs/architecture/README.md) ·
+[API](docs/api/README.md) ·
+[Development](docs/development/README.md) ·
+[Deployment](docs/deployment/README.md)
+
+</div>
 
 ---
 
-## What goes in
+```
+you  ▸  "Manindra Agrawal"
 
-```mermaid
-flowchart LR
-    P["📄 Papers<br/><i>by scholar or title</i>"] --> L
-    W["🌐 Web & Wikipedia<br/><i>url_context</i>"] --> L
-    Y["▶️ YouTube<br/><i>watched directly</i>"] --> L
-    U["⬆️ Uploads<br/><i>PDF · audio · video</i>"] --> L
+        ⟶  finds his publications, resolves open-access sources, indexes them
+        ⟶  on a queue, while you do something else
 
-    L(["Your library"])
+you  ▸  "What is your view on primality testing?"
 
-    L --> IX["🟢 Index<br/><i>~5-10s each</i>"]
-    L --> GEN["✨ Generate<br/><i>~1min each</i>"]
+        ⟶  Based on Manindra Agrawal's published work: the AKS primality
+           test gives the first deterministic polynomial-time algorithm…
 
-    IX --> Q["💬 Grounded chat<br/>with citations"]
-    GEN --> S["📖 Blog · Slides · Quiz<br/>Flashcards · Audio · Art"]
+           ▪ Primality and identity testing via Chinese remaindering
+           ▪ PRIMES is in P
 
-    style L fill:#f0f9ff,stroke:#0284c7
-    style Q fill:#ecfdf5,stroke:#059669
-    style S fill:#ecfdf5,stroke:#059669
+you  ▸  "What do you think about randomness in algorithms?"
+
+        ⟶  Manindra Agrawal's work provided here does not cover that.
 ```
 
-Everything is normalised to text as it arrives — a video is watched once, a
-recording transcribed once — so one pipeline handles all of it from there on.
-
-**Index** and **Generate** are separate buttons because they cost differently.
-Indexing makes a source searchable in seconds; generating a study module takes
-about a minute. Most questions only need the first.
+**That last answer is the point.** Asked something outside the indexed work, an
+advisor declines — and declines *structurally*: when retrieval finds nothing
+relevant, the model is never called, so there is nothing there to invent from.
+A prompt instruction to abstain is advice. Not making the call is a guarantee.
 
 ---
 
-## The library
+## What it does
 
-```mermaid
-stateDiagram-v2
-    [*] --> added
-
-    added --> resolving: Index
-    resolving --> fetching: open-access PDF found
-    resolving --> embedding: no PDF, or not a paper
-    fetching --> embedding: downloaded, or blocked
-    embedding --> indexed: chat can now cite it
-    indexed --> [*]
-
-    added --> writing: Generate
-    indexed --> writing: Generate
-    writing --> media: blog, slides, quiz, cards
-    media --> ready: audio + illustration
-    writing --> failed
-    ready --> [*]
-```
-
-Every step can fail without stopping the rest. No PDF falls back to URL context,
-then to search grounding; a source that cannot be fetched is still indexed from
-what is known about it. One bad source never aborts a run.
-
-**Papers are only fetched once.** A shared corpus caches the resolved URL and
-the PDF bytes across every library, so the second library to index a paper skips
-resolution and download — measured at 10.6s cold against 5.2s reused, and it
-still works when the publisher has since started blocking automated access.
+|  | |
+| :-- | :-- |
+| 📚 **Libraries that build themselves** | Name a scholar; their published work is found, resolved to open-access sources, downloaded and indexed. Add anything else too — PDFs, your own notes, web pages, Wikipedia, a talk on YouTube |
+| 💬 **Answers you can check** | Every claim points at the passage it came from. Citations are the text actually retrieved, never something the model reported afterwards |
+| 🎓 **Advisors** | Turn a library into someone you can consult. It answers from their published work in their register, and says so plainly when their work does not cover the question |
+| 🔍 **Search across everything** | One query over every library you can reach, returning the passage that matched rather than a list of titles |
+| 🤝 **Shared, deliberately** | Yours, your team's, or your organisation's — or shared with named people as viewer or editor. Build an advisor once; everyone consults the same one |
+| ✨ **Read it back** | A write-up, slides, flashcards, a quiz, narration and cover art for any source. Bibliographies in BibTeX, APA, MLA, Chicago, Harvard or RIS |
 
 ---
 
-## Asking on the landing page
-
-One question box, and an explicit choice of what it is asking — because the four
-possibilities answer differently, and a user who cannot see which one they got
-cannot tell a bad answer from a wrong target.
-
-| Target | Answers from |
-| --- | --- |
-| **All my libraries** | Retrieval across everything you can reach, in one query. No cap |
-| **One library** | That library's full paper text, via File Search |
-| **An advisor** | That scholar's published work, in their register. Several at once asks a panel |
-| **The web** | Live search, no library |
-
-Libraries are browsable by subject, taken from the topics a scholar search
-already resolved — nothing to tag by hand.
-
----
-
-## Asking
-
-```mermaid
-flowchart TD
-    Q(["A question"]) --> W{"Where from?"}
-
-    W -->|"landing page"| ALL["Every library<br/><i>five at a time</i>"]
-    W -->|"inside a library"| ONE["That library only"]
-    W -->|"web toggle"| NET["Live web search"]
-
-    ALL --> A["Answer + citations"]
-    ONE --> A
-    NET --> A
-
-    style A fill:#ecfdf5,stroke:#059669
-```
-
-The landing page asks across everything you have collected. Open a library and
-the same question is scoped to it alone.
-
-Cross-library answers report what they searched, because they have to: **File
-Search accepts at most five stores per call.** With more libraries than that,
-the five most recently touched are searched and the answer says how many were
-left out. A partial answer presented as a complete one would be worse than the
-limit.
-
----
-
-## Citations
-
-Every source cites in **BibTeX, APA, MLA, Chicago, Harvard and RIS**, one at a
-time or as a whole bibliography.
-
-Bibliographic detail comes from Crossref or not at all. A hallucinated volume
-number reads as authoritative, gets pasted into somebody's bibliography, and is
-wrong — so fields are omitted rather than guessed, and the dialog says which of
-the two happened.
-
----
-
-## Architecture
+## How it is put together
 
 ```mermaid
 flowchart TB
-    B["🌐 Browser<br/><b>no API key · no stored state</b>"]
+    B["🌐 Browser<br/><i>no key · no stored state</i>"]
     C["⌨️ curl · MCP<br/><i>per-user API key</i>"]
 
     subgraph SRV["Hono router — mounted by Vite in dev AND node-server in prod"]
@@ -146,21 +71,20 @@ flowchart TB
     B -->|"session cookie"| R
     C -->|"x-api-key"| R
 
-    R --> PG[("Postgres<br/><i>tenancy · ACLs · papers · jobs · search index</i>")]
+    R --> PG[("Postgres<br/><i>tenancy · ACLs · sources<br/>jobs · search index</i>")]
     R --> BL[("Blobs<br/><i>GCS or ./.data</i>")]
     R --> GEM
 
-    W["Queue worker<br/><i>separate process</i>"] --> PG
+    W["⚙️ Queue worker<br/><i>separate process</i>"] --> PG
     W --> GEM
     R -.->|"enqueue"| PG
-    PG -.->|"claim"| W
+    PG -.->|"claim · SKIP LOCKED"| W
 
     subgraph GEM["Gemini Developer API"]
         direction LR
         T1["google_search"]
         T2["url_context"]
         T3["file_search"]
-        T4["files · media"]
     end
 
     style B fill:#fef3c7,stroke:#d97706
@@ -173,16 +97,38 @@ flowchart TB
 **One router implementation** serves development and production, so nothing
 works locally but breaks when deployed.
 
-**Work outlives the request.** Crawling a scholar and indexing their papers takes
-minutes, so requests enqueue and return a run id; the worker does the work and
-the client polls. Closing the tab no longer cancels anything.
+**Work outlives the request.** Crawling a scholar takes minutes, so requests
+enqueue and return a run id; the worker does the work and the client polls.
+Closing the tab cancels nothing.
 
 **Every resource belongs to an org, a team and an owner,** with a visibility and
-optional per-person grants. The authorization predicate is part of the same query
-as the data it guards, which is also why the search index is in Postgres rather
-than in Gemini's File Search — see [Constraints](#constraints-worth-knowing).
+optional per-person grants. The authorization predicate is part of the same
+query as the data it guards — loading a resource *is* the check, so there is no
+separate "may I?" call to forget.
 
-→ [Architecture in depth](docs/architecture/README.md)
+---
+
+## Three findings that shaped the design
+
+Each was discovered by testing the live API, and each cost a debugging session.
+
+**Grounding tools are mutually exclusive.** File Search combines with neither
+Google Search nor URL Context. So work is staged — discover, ingest, ground —
+and chat exposes a visible toggle rather than guessing which the user wanted.
+
+**File Search corrupts structured JSON.** Its citation-insertion pass rewrites
+the `[` that opens a JSON array, reliably. Grounded structured generation
+therefore runs as two calls: grounded prose first, then structuring with no
+tools attached.
+
+**Retrieval cannot be scoped below a store — so the search index lives in
+Postgres.** `metadataFilter` only matches the API's own recognised keys, and an
+app-defined key silently matches *nothing*; a single call accepts at most five
+stores. Under sharing, the set of libraries a person can see differs per person
+and routinely exceeds five, so a store boundary cannot express it. In Postgres
+the authorization predicate is a clause in the same query as the retrieval.
+
+→ [The full reasoning](docs/architecture/README.md)
 
 ---
 
@@ -192,167 +138,87 @@ than in Gemini's File Search — see [Constraints](#constraints-worth-knowing).
 
 ```bash
 npm install
-cp .env.example .env      # add GEMINI_API_KEY
-docker compose up -d db   # Postgres 17 + pgvector on :5432
+cp .env.example .env       # add GEMINI_API_KEY
+docker compose up -d db    # Postgres 17 + pgvector
 npm run db:migrate
 ```
 
-```mermaid
-flowchart LR
-    A["docker compose up -d db"] --> B[("Postgres :5432")]
-    C["npm run dev:local<br/><i>terminal 1</i>"] --> D["App + API<br/>:3000"]
-    E["npm run worker<br/><i>terminal 2</i>"] --> B
-    D --> B
-    D --> F["./.data/blobs"]
-    D -.->|"always the real API"| G["Gemini"]
-
-    style G fill:#f5f3ff,stroke:#7c3aed
-    style E fill:#ecfdf5,stroke:#059669
+```bash
+npm run dev:local          # terminal 1 — app + API on :3000
+npm run worker             # terminal 2 — drains the job queue
 ```
 
-Verify with `curl localhost:3000/api/healthz`:
+> **Run the worker.** Without it, everything you ask for queues and nothing
+> happens — the interface will sit at "queued" indefinitely.
+
+Check it with `curl localhost:3000/api/healthz`:
 
 ```json
 {"ok": true, "geminiKey": "configured", "database": "reachable", "acl": "disabled", "blobs": "filesystem"}
 ```
 
-> **Run the worker.** Without it, indexing and enrichment queue up and nothing
-> ever happens — the UI will sit at "queued" indefinitely.
-
 > **Semantic search needs one measured number.** `gemini-embedding-2`'s output
-> dimension is not in this repository. Until you supply it, search is
-> keyword-only:
+> dimension is not in this repository, and guessing it would reject every
+> insert. Until it is supplied, search is keyword-only:
 > ```bash
 > GEMINI_API_KEY=… npm run spike:postgres    # read check G2
 > EMBEDDING_DIM=<n> npm run db:migrate
 > ```
 
-> **No File Search emulator exists.** Chat grounding always calls the real API,
-> even locally. `FILE_SEARCH_STORE_PREFIX=dev-` keeps local stores identifiable.
-
 → [Development guide](docs/development/README.md)
 
 ---
 
-## API and MCP
+## Using it from elsewhere
 
-The browser, `curl` and MCP clients all hit the same router.
-
-```bash
-export SM=http://localhost:8080 KEY=your-key
-
-curl -s "$SM/api/discover?q=Hinton" -H "x-api-key: $KEY"
-
-curl -s $SM/api/profiles/$ID/sources -H "x-api-key: $KEY" \
-  -H 'content-type: application/json' \
-  -d '{"url":"https://www.youtube.com/watch?v=aircAruvnKk"}'
-
-curl -sN $SM/api/chat -H "x-api-key: $KEY" -H 'content-type: application/json' \
-  -d '{"message":"What do my libraries say about attention?"}'
-```
+The browser, `curl` and MCP clients all hit the same router — there is no
+separate integration API that can drift from what the app does.
 
 ```bash
-claude mcp add scholarmind -- node /absolute/path/to/mcp/server.mjs
+# Mint a key from a signed-in session. Returned once; only a hash is stored.
+curl -X POST $SM/api/keys -H 'content-type: application/json' \
+  -d '{"name":"laptop","scope":"read"}'
+
+curl -s "$SM/api/search?q=primality" -H "x-api-key: sm_3b140aeb7208_…"
 ```
 
-Thirteen tools: find and build libraries, add sources, index, generate, ask,
-cite, export. A wrong API key is refused in **every** environment, including
-local development — otherwise a misconfigured integration works on a laptop and
-fails only once deployed.
+A key **acts as its owner** and inherits their sharing exactly — no second
+permission model to keep in step. A `read` scope can narrow what it may do,
+never widen it, and no key may mint another.
 
-→ [API & MCP reference, with examples](docs/api/README.md)
-
----
-
-## Models
-
-| Purpose | Model |
-| :--- | :--- |
-| Search, reasoning, generation, chat, media understanding | `gemini-3.8-flash` |
-| Cover illustrations | `gemini-3.1-flash-image` |
-| Speech | `gemini-3.1-flash-tts-preview` |
-| Retrieval embeddings | `gemini-embedding-2` |
-
-Text and media understanding use the **Interactions API**; speech and images
-stay on `generateContent`.
-
----
-
-## Constraints worth knowing
-
-All were found by testing the live API, and all shape the design.
-The third is the reason the architecture looks the way it does.
-
-**Grounding tools are mutually exclusive.** File Search combines with neither
-Google Search nor URL Context. So work is staged, and chat exposes a visible
-toggle rather than guessing.
-
-**File Search corrupts structured JSON.** Its citation-insertion pass rewrites
-the `[` that opens a JSON array. Grounded structured generation therefore runs
-in two calls: grounded prose, then structuring with no tools.
-
-**Retrieval cannot be scoped below a store, so the search index moved to
-Postgres.** `metadataFilter` only matches the API's own recognised keys — an
-app-defined key silently matches nothing — and a call accepts at most five
-stores. Under sharing, the set of libraries a person can see differs per person
-and routinely exceeds five, so a store boundary cannot express it. The index now
-lives in Postgres, where the authorization predicate is a clause in the same
-query as the retrieval. File Search is kept for single-profile chat grounding,
-where the cap is irrelevant.
-
-**The Interactions API does not take `parts`.** Media goes in as typed content
-blocks: `{type:'video', uri}` with a YouTube link works directly, no download.
-
-**Grounding is a Gemini feature, so only some calls can change model.** Anything
-using `google_search`, `url_context` or `file_search` stays on
-`gemini-3.8-flash` — a search that quietly stops grounding returns a fluent
-*invented* publication list rather than an error. Calls attaching nothing —
-advisor answers, panel synthesis, cross-library chat, the structuring pass —
-read `PLAIN_TEXT_MODEL` and can run on something cheaper or open-weights.
-
-→ [The full reasoning](docs/architecture/README.md)
+→ [API & MCP reference](docs/api/README.md)
 
 ---
 
 ## Scripts
 
-| Command | Purpose |
-| :--- | :--- |
+| | |
+| :-- | :-- |
 | `npm run dev:local` | App + API against the local database |
 | `npm run worker` | Queue worker — nothing is processed without it |
 | `npm run db:migrate` | Apply migrations (`db:reset` drops and rebuilds) |
-| `npm run spike:postgres` | Check pgvector and measure the embedding dimension |
+| `npm test` | Vitest — pure logic, no network, no database |
+| `npm run spike:postgres` | Check pgvector; **measure the embedding dimension** |
 | `npm run spike:models` | List models a key can see; test tool-free candidates |
-| `npm test` | Vitest — pure logic, no network |
-| `npm run build` | Production client build |
-| `npm start` | Production server |
+| `npm run build` · `npm start` | Production build and server |
 | `npm run mcp` | MCP server over stdio |
-| `npm run typecheck` | `tsc --noEmit` |
-| `node scripts/reconcile-stores.mjs` | Find File Search stores nothing references |
 
-## Layout
+Integration tests need a real database and are skipped unless
+`TEST_DATABASE_URL` is set — deliberately not `DATABASE_URL`, since they drop
+the schema.
 
-```
-server/       router · repository · blobStore · gemini · ingest
-              sources · corpus · citations · export
-components/   React UI
-mcp/          MCP server (a client of the HTTP API)
-services/     api.ts — the browser's only server interface
-tests/        vitest, no network
-docs/         architecture · api · development · deployment · features · sdlc
-scripts/      live API verification spikes, housekeeping
-```
+---
 
-## Docs
+## Documentation
 
-| | |
-| :--- | :--- |
-| [Architecture](docs/architecture/README.md) | Design and the reasoning behind it |
-| [API & MCP](docs/api/README.md) | Endpoints, tools, worked examples |
-| [Features](docs/general/features.md) | User guide |
-| [Development](docs/development/README.md) | Local setup, conventions, debugging |
-| [Deployment](docs/deployment/README.md) | GCP provisioning end to end |
-| [SDLC](docs/sdlc/README.md) | How this project is planned and built |
+**→ [`docs/`](docs/README.md)** — the index, with a map of which document
+answers which question.
+
+Before changing anything, read **[`CLAUDE.md`](CLAUDE.md)**: the constraints and
+conventions that are load-bearing, and the ones that will bite you if you
+ignore them.
+
+---
 
 ## License
 
