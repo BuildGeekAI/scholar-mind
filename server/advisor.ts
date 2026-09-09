@@ -1,7 +1,7 @@
 import { Ctx } from './authz';
 import { ProfileRecord } from './repository';
 import { Hit, search } from './search';
-import { MODELS, ai, extractText } from './gemini';
+import { ai, extractText, plainModel } from './gemini';
 
 /**
  * Advisors: answering from a person's published work, in their register.
@@ -163,7 +163,8 @@ export const askAdvisor = async (
     // grounding tool would both re-open the five-store limit and let the answer
     // draw on sources we did not choose and cannot cite exactly.
     const response = await (ai().interactions as any).create({
-      model: MODELS.text,
+      // No tools, so this need not be a Gemini model — see `plainModel`.
+      model: plainModel(),
       input: buildInput(profile, question, hits),
     });
     const answer = extractText(response).trim();
@@ -215,7 +216,7 @@ Question: ${question}
 ${answered.map(a => `--- ${a.advisorName} ---\n${a.answer}`).join('\n\n')}`;
 
   try {
-    const response = await (ai().interactions as any).create({ model: MODELS.text, input });
+    const response = await (ai().interactions as any).create({ model: plainModel(), input });
     return extractText(response).trim() || undefined;
   } catch (e) {
     // The individual answers are the substance; the summary is a convenience.

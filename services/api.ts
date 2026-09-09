@@ -106,9 +106,11 @@ export interface DuplicateProfile {
 export const searchScholar = (
   profileId: string,
   query: string,
-  allowDuplicate = false
+  allowDuplicate = false,
+  /** Overrides the server default (20). Capped at 50 server-side. */
+  paperLimit?: number
 ): Promise<{ runId: string | null; profile: ProfileRecord; alreadyRunning?: boolean }> =>
-  send(`/profiles/${profileId}/search`, 'POST', { query, allowDuplicate });
+  send(`/profiles/${profileId}/search`, 'POST', { query, allowDuplicate, paperLimit });
 
 export const findPaper = (profileId: string, query: string): Promise<Paper> =>
   send(`/profiles/${profileId}/papers/find`, 'POST', { query });

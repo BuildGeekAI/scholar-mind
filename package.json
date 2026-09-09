@@ -20,7 +20,8 @@
     "db:reset": "tsx server/db/migrate.ts --reset",
     "spike:postgres": "node scripts/spike-postgres.mjs",
     "worker": "tsx server/worker.ts",
-    "dev:worker": "DATABASE_URL=postgres://scholarmind:scholarmind@127.0.0.1:5432/scholarmind tsx server/worker.ts"
+    "dev:worker": "DATABASE_URL=postgres://scholarmind:scholarmind@127.0.0.1:5432/scholarmind tsx server/worker.ts",
+    "spike:models": "node scripts/spike-models.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",

@@ -67,18 +67,20 @@ const storeFor = async (
  */
 const crawlProfile = async (job: Job): Promise<void> => {
   const ctx = ctxOf(job);
-  const { profileId, query, mode, allowDuplicate } = job.payload as {
+  const { profileId, query, mode, allowDuplicate, paperLimit } = job.payload as {
     profileId: string;
     query: string;
     mode?: PipelineMode;
     allowDuplicate?: boolean;
+    /** Overrides SCHOLAR_PAPER_LIMIT for this crawl. */
+    paperLimit?: number;
   };
 
   const profile = await repo.getProfile(ctx, profileId, 'edit');
   if (!profile) throw new Error(`Profile ${profileId} is gone or no longer writable.`);
 
   await jobs.note(job.id, 'searching', { query });
-  const result = await searchScholarAndPapers(query);
+  const result = await searchScholarAndPapers(query, paperLimit);
 
   const keys = scholarKeysFor(query, result.name);
   if (!allowDuplicate) {

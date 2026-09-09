@@ -58,6 +58,7 @@ import {
   googleSearchTool,
   MODELS,
   ai,
+  plainModel,
 } from './gemini';
 
 type Env = { Variables: { user: User; ctx: Ctx } };
@@ -698,7 +699,9 @@ User: ${message}`;
     return streamSSE(c, async stream => {
       try {
         const result: any = await (ai().interactions as any).create({
-          model: MODELS.text,
+          // Grounded turns must stay on the Gemini model; a turn carrying its
+          // passages inline attaches nothing and can run anywhere.
+          model: tools.length ? MODELS.text : plainModel(),
           input,
           tools,
           stream: true,
@@ -780,7 +783,7 @@ User: ${message}`;
     const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const body = await c.req.json().catch(() => ({ query: '' }));
-    const { query, allowDuplicate, mode } = body;
+    const { query, allowDuplicate, mode, paperLimit } = body;
     if (!query?.trim()) return c.json({ error: 'query is required' }, 400);
 
     /**
@@ -819,7 +822,7 @@ User: ${message}`;
     const job = await jobs.enqueue(ctx, {
       type: 'crawl.profile',
       runId: run.id,
-      payload: { profileId: profile.id, query, mode: mode ?? 'index', allowDuplicate: !!allowDuplicate },
+      payload: { profileId: profile.id, query, mode: mode ?? 'index', allowDuplicate: !!allowDuplicate, paperLimit },
       dedupeKey: `crawl:${profile.id}`,
       priority: 1,
     });
