@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LegacyProfile, Message, Paper } from '../types';
-import { resolveUser, User } from './identity';
+import { cookie, resolveUser, User } from './identity';
 import { KeyScope, createKey, listKeys, revokeKey } from './apiKeys';
 import { Ctx, PrincipalType, Role, aclEnabled, findUserByEmail, grantAccess, listGrants, profileRole, revokeAccess } from './authz';
 import { resolveContext, listOrgUsers } from './tenancy';
@@ -9,6 +9,18 @@ import { ping as pingDatabase } from './db';
 import * as jobs from './jobs';
 import { removePaperFromIndex } from './indexer';
 import { Scope, search } from './search';
+import {
+  SESSION_COOKIE,
+  STATE_COOKIE,
+  authorizationUrl,
+  domainAllowed,
+  exchangeCode,
+  isConfigured as googleAuthConfigured,
+  randomToken,
+  redirectUri,
+  signIn,
+  signOut,
+} from './googleAuth';
 import {
   deleteCrawler,
   getCrawler,
@@ -80,6 +92,78 @@ export const createRouter = () => {
       },
       database ? 200 : 503
     );
+  });
+
+  // --- Google sign-in ------------------------------------------------------
+  // Replaces IAP. IAP gates on GCP IAM, so every user needs a role grant in the
+  // project — which cannot deliver self-serve signup, and needs a Load Balancer
+  // and certificates in front of Cloud Run to exist at all.
+  //
+  // Registered before the auth middleware, because these are the endpoints an
+  // unauthenticated caller has to be able to reach.
+
+  const secureCookie = process.env.NODE_ENV === 'production';
+
+  const setCookie = (c: any, name: string, value: string, maxAgeSeconds: number) => {
+    const parts = [
+      `${name}=${encodeURIComponent(value)}`,
+      'Path=/',
+      'HttpOnly',
+      // Lax, not Strict: the OAuth callback is a top-level navigation *from
+      // Google*, and Strict would withhold the cookie exactly then.
+      'SameSite=Lax',
+      `Max-Age=${maxAgeSeconds}`,
+    ];
+    if (secureCookie) parts.push('Secure');
+    c.header('Set-Cookie', parts.join('; '), { append: true });
+  };
+
+  const clearCookie = (c: any, name: string) => setCookie(c, name, '', 0);
+
+  app.get('/auth/config', c =>
+    c.json({ google: googleAuthConfigured(), redirectUri: redirectUri() })
+  );
+
+  app.get('/auth/google', c => {
+    if (!googleAuthConfigured()) {
+      return c.json(
+        { error: 'Google sign-in is not configured. Set GOOGLE_OAUTH_CLIENT_ID and _SECRET.' },
+        503
+      );
+    }
+    // The state parameter, echoed back by Google and compared on return. Without
+    // it, an attacker can complete a sign-in flow they started in a victim's
+    // browser and leave them logged in as someone else.
+    const state = randomToken();
+    setCookie(c, STATE_COOKIE, state, 600);
+    return c.redirect(authorizationUrl(state));
+  });
+
+  app.get('/auth/callback', async c => {
+    const code = c.req.query('code');
+    const state = c.req.query('state');
+    const expected = cookie(c.req.raw.headers, STATE_COOKIE);
+    clearCookie(c, STATE_COOKIE);
+
+    if (c.req.query('error')) return c.redirect('/?auth=denied');
+    if (!code || !state || !expected || state !== expected) return c.redirect('/?auth=state');
+
+    const identity = await exchangeCode(code);
+    if (!identity) return c.redirect('/?auth=failed');
+
+    if (!domainAllowed(identity.email, identity.hostedDomain)) {
+      return c.redirect('/?auth=domain');
+    }
+
+    const { token } = await signIn(identity, c.req.header('user-agent'));
+    setCookie(c, SESSION_COOKIE, token, 60 * 60 * 24 * Number(process.env.SESSION_DAYS || 30));
+    return c.redirect('/');
+  });
+
+  app.post('/auth/signout', async c => {
+    await signOut(cookie(c.req.raw.headers, SESSION_COOKIE));
+    clearCookie(c, SESSION_COOKIE);
+    return c.json({ ok: true });
   });
 
   app.use('*', async (c, next) => {
@@ -253,6 +337,20 @@ export const createRouter = () => {
           403
         )
       : null;
+
+  app.get('/auth/me', async c => {
+    const user = c.get('user');
+    const ctx = c.get('ctx');
+    return c.json({
+      email: user.email,
+      name: user.name,
+      picture: user.picture,
+      orgId: ctx.orgId,
+      teamId: ctx.teamId,
+      viaKey: !!user.viaKey,
+      scope: user.scope ?? null,
+    });
+  });
 
   app.get('/keys', async c => c.json(await listKeys(c.get('ctx').userId)));
 

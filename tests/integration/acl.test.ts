@@ -409,6 +409,102 @@ describe.skipIf(!url)('multi-tenant access control, against Postgres', () => {
     });
   });
 
+  describe('sessions', () => {
+    let auth: typeof import('../../server/googleAuth');
+    let identity: typeof import('../../server/identity');
+
+    beforeAll(async () => {
+      auth = await import('../../server/googleAuth');
+      identity = await import('../../server/identity');
+    });
+
+    const withCookie = (token: string) => new Headers({ cookie: `sm_session=${token}` });
+
+    const google = (subject: string, email: string) => ({
+      subject,
+      email,
+      name: 'Signed In',
+      picture: undefined,
+      hostedDomain: undefined,
+    });
+
+    it('creates the person on first sign-in and resolves them afterwards', async () => {
+      const { token, user } = await auth.signIn(google('11111', 'newcomer@example.com'));
+      expect(user.email).toBe('newcomer@example.com');
+      const resolved = await identity.resolveUser(withCookie(token));
+      expect(resolved?.email).toBe('newcomer@example.com');
+      expect(resolved?.viaKey).toBeFalsy();
+    });
+
+    it('keys the person on Google’s subject, so a changed address is the same person', async () => {
+      const first = await auth.signIn(google('22222', 'before@example.com'));
+      const second = await auth.signIn(google('22222', 'after@example.com'));
+      expect(second.user.userId).toBe(first.user.userId);
+      // And the newer address wins.
+      expect(second.user.email).toBe('after@example.com');
+    });
+
+    it('rejects a forged cookie of the right shape', async () => {
+      expect(await auth.verifySession('a'.repeat(64))).toBeNull();
+    });
+
+    it('rejects a cookie of the wrong shape without touching the database', async () => {
+      expect(await auth.verifySession('not-a-token')).toBeNull();
+      expect(await auth.verifySession('')).toBeNull();
+    });
+
+    it('stops working the moment the session is signed out', async () => {
+      const { token } = await auth.signIn(google('33333', 'bye@example.com'));
+      expect(await auth.verifySession(token)).not.toBeNull();
+      await auth.signOut(token);
+      expect(await auth.verifySession(token)).toBeNull();
+    });
+
+    it('rejects an expired session', async () => {
+      const { token } = await auth.signIn(google('44444', 'stale@example.com'));
+      await db.query(
+        `UPDATE sessions SET expires_at = now() - interval '1 day' WHERE token_hash = $1`,
+        [require('node:crypto').createHash('sha256').update(token).digest('hex')]
+      );
+      expect(await auth.verifySession(token)).toBeNull();
+    });
+
+    it('stores only a hash — the database never holds a usable cookie', async () => {
+      const { token } = await auth.signIn(google('55555', 'hashed@example.com'));
+      const row = await db.one(`SELECT token_hash FROM sessions ORDER BY created_at DESC LIMIT 1`);
+      expect(row!.token_hash).not.toBe(token);
+      expect(row!.token_hash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('signing out one session leaves the others alone', async () => {
+      const laptop = await auth.signIn(google('66666', 'two@example.com'));
+      const phone = await auth.signIn(google('66666', 'two@example.com'));
+      await auth.signOut(laptop.token);
+      expect(await auth.verifySession(laptop.token)).toBeNull();
+      expect(await auth.verifySession(phone.token)).not.toBeNull();
+    });
+
+    it('a signed-in person lands in a tenant and can hold libraries', async () => {
+      const { token } = await auth.signIn(google('77777', 'tenant@example.com'));
+      const user = await identity.resolveUser(withCookie(token));
+      const { resolveContext } = await import('../../server/tenancy');
+      const ctx = await resolveContext(user!);
+      expect(ctx.orgId).toBeTruthy();
+      expect(ctx.teamId).toBeTruthy();
+      // New person, no grants: they see nothing of Alice's private library.
+      expect(await repo.getProfile(ctx, 'lib-priv')).toBeNull();
+    });
+
+    it('purges expired sessions and leaves live ones', async () => {
+      const live = await auth.signIn(google('88888', 'live@example.com'));
+      await db.query(`UPDATE sessions SET expires_at = now() - interval '1 day' WHERE user_id <> $1`, [
+        live.user.userId,
+      ]);
+      await auth.purgeExpiredSessions();
+      expect(await auth.verifySession(live.token)).not.toBeNull();
+    });
+  });
+
   describe('degradation', () => {
     /**
      * The search index must not depend on File Search being reachable. It exists

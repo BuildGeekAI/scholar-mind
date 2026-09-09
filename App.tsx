@@ -4,6 +4,7 @@ import { Theme, applyTheme, readTheme } from './components/theme';
 import * as api from './services/api';
 import Dashboard from './components/Dashboard';
 import ProfileWorkspace from './components/ProfileWorkspace';
+import SignIn from './components/SignIn';
 
 const EMOJIS = ['🤖', '🐳', '🤝', '🦀', '🏠', '⚖️', '🛡️', '☁️', '📒', '🦙'];
 
@@ -15,6 +16,10 @@ const App: React.FC = () => {
   const [importing, setImporting] = useState(false);
   const [theme, setTheme] = useState<Theme>(readTheme);
 
+  // null while unknown, false once the server has said it does not know us.
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [googleReady, setGoogleReady] = useState(false);
+
   useEffect(() => { applyTheme(theme); }, [theme]);
   const toggleTheme = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), []);
 
@@ -23,13 +28,39 @@ const App: React.FC = () => {
       setProfiles(await api.listProfiles());
       setError(null);
     } catch (e: any) {
+      // 401 is not an error to report; it means "sign in first".
+      if (e?.status === 401) {
+        setSignedIn(false);
+        return;
+      }
       setError(e.message || 'Could not reach the server.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  /**
+   * Establish who we are before asking for anything. A 401 here is the ordinary
+   * first-visit path, not a failure.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await api.me();
+        if (!cancelled) setSignedIn(true);
+      } catch (e: any) {
+        if (cancelled) return;
+        setSignedIn(false);
+        setLoading(false);
+        // Only needed when signed out, to decide what the sign-in screen offers.
+        api.authConfig().then(cfg => setGoogleReady(cfg.google)).catch(() => setGoogleReady(false));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => { if (signedIn) refresh(); }, [signedIn, refresh]);
 
   /**
    * The landing page found nothing for a query, so build it: a fresh profile,
@@ -117,6 +148,18 @@ const App: React.FC = () => {
       alert(err.message || 'Could not delete profile.');
     }
   };
+
+  // Identity is settled before anything else renders: every other view assumes
+  // the server will answer, and it will not until we are signed in.
+  if (signedIn === null) {
+    return (
+      <div className="h-full w-full flex items-center justify-center bg-surface">
+        <Loader2 className="w-6 h-6 text-scholarly-600 animate-spin" />
+      </div>
+    );
+  }
+
+  if (signedIn === false) return <SignIn googleReady={googleReady} />;
 
   if (activeProfileId) {
     return (

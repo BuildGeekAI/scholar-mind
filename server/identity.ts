@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { KeyScope, verifyKey } from './apiKeys';
+import { SESSION_COOKIE, verifySession } from './googleAuth';
 
 export interface User {
   id: string;
@@ -15,6 +16,8 @@ export interface User {
   keyId?: string;
   /** True for any key-authenticated caller, including the bootstrap key. */
   viaKey?: boolean;
+  name?: string;
+  picture?: string;
 }
 
 const IAP_JWT_HEADER = 'x-goog-iap-jwt-assertion';
@@ -65,6 +68,16 @@ const secretsMatch = (a: string, b: string): boolean => {
 
 type KeyOutcome = { status: 'valid'; user: User } | { status: 'invalid' } | { status: 'absent' };
 
+/** Reads one cookie without pulling in a parser for the two we have. */
+export const cookie = (headers: Headers, name: string): string => {
+  const header = headers.get('cookie') || '';
+  for (const part of header.split(';')) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key === name) return decodeURIComponent(rest.join('='));
+  }
+  return '';
+};
+
 const presentedKey = (headers: Headers): string => {
   const bearer = headers.get('authorization')?.replace(/^Bearer\s+/i, '');
   return headers.get('x-api-key') || bearer || '';
@@ -113,6 +126,21 @@ export const resolveUser = async (headers: Headers): Promise<User | null> => {
   // integration appeared to work locally and failed only in production.
   if (outcome.status === 'invalid') return null;
 
+  // A browser session from Google sign-in. Checked before IAP and before the
+  // dev fallback, so signing in locally behaves exactly as it does deployed —
+  // the alternative is an auth path that only ever runs in production.
+  const session = await verifySession(cookie(headers, SESSION_COOKIE));
+  if (session) {
+    return {
+      id: session.externalId,
+      email: session.email,
+      name: session.name,
+      picture: session.picture,
+    };
+  }
+
+  // No session, and Google sign-in is the way in. The dev fallback stays for
+  // local work with sign-in unconfigured; it is unreachable in production.
   if (!isProduction) return DEV_USER;
 
   const assertion = headers.get(IAP_JWT_HEADER);

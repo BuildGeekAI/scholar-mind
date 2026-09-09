@@ -347,6 +347,39 @@ export const searchLibraries = (
   return send(`/search?${params}`, 'GET');
 };
 
+// --- Identity ---------------------------------------------------------------
+
+export interface Me {
+  email: string;
+  name?: string;
+  picture?: string;
+  orgId: string;
+  teamId: string;
+  /** True when this call was authenticated with an API key rather than a session. */
+  viaKey: boolean;
+  scope: 'read' | 'write' | null;
+}
+
+/** Who the server thinks we are. A 401 means "not signed in". */
+export const me = (): Promise<Me> => send('/auth/me', 'GET');
+
+export interface AuthConfig {
+  google: boolean;
+  redirectUri: string;
+}
+
+export const authConfig = (): Promise<AuthConfig> => send('/auth/config', 'GET');
+
+/** A full-page navigation, not fetch: the OAuth flow is a browser redirect. */
+export const signInWithGoogle = (): void => {
+  window.location.href = '/api/auth/google';
+};
+
+export const signOut = async (): Promise<void> => {
+  await send('/auth/signout', 'POST');
+  window.location.href = '/';
+};
+
 // --- API keys ---------------------------------------------------------------
 // A key acts as you: it inherits your libraries and your grants exactly, and a
 // scope can only narrow what it may do.
