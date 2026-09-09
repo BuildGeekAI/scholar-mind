@@ -42,31 +42,37 @@ const STEPS = [
 
 const FEATURES = [
   {
+    tint: 'bg-scholarly-50 text-scholarly-600 dark:bg-scholarly-500/15 dark:text-scholarly-400',
     icon: BookOpen,
     title: 'Libraries that build themselves',
     body: 'Papers, and anything else — PDFs, your own notes, web pages, Wikipedia, a conference talk on YouTube. A video is watched once and transcribed, however often you use it.',
   },
   {
+    tint: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400',
     icon: MessageSquareQuote,
     title: 'Answers you can check',
     body: 'Every claim points at the passage it came from. Citations are the text actually retrieved, never something the model reported afterwards.',
   },
   {
+    tint: 'bg-violet-50 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400',
     icon: UserRoundCog,
     title: 'Advisors',
     body: 'Turn a library into someone you can consult. It answers from their published work in their register — and says so plainly when their work does not cover your question, rather than inventing a position.',
   },
   {
+    tint: 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400',
     icon: Search,
     title: 'Search across everything',
     body: 'One query over every library you can reach, returning the passage that matched rather than a list of titles.',
   },
   {
+    tint: 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400',
     icon: Share2,
     title: 'Shared, deliberately',
     body: 'A library is yours, your team’s, or your organisation’s — or shared with named people as a viewer or an editor. Build an advisor once; everyone consults the same one.',
   },
   {
+    tint: 'bg-sky-50 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400',
     icon: Sparkles,
     title: 'Read it back',
     body: 'A write-up, slides, flashcards, a quiz, narration and cover art for any source. Bibliographies in BibTeX, APA, MLA, Chicago, Harvard or RIS.',
@@ -200,7 +206,7 @@ const SignIn: React.FC = () => {
 
           <button
             type="submit" disabled={busy}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 text-sm font-medium text-surface transition hover:opacity-90 disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-scholarly-500 to-scholarly-700 px-4 py-3 text-sm font-medium text-white shadow-lg shadow-scholarly-500/25 transition hover:opacity-95 disabled:opacity-50"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
             {mode === 'signin' ? 'Sign in' : 'Create account'}
@@ -228,10 +234,16 @@ const SignIn: React.FC = () => {
   return (
     <div className="min-h-screen bg-surface">
       {/* A wash behind the fold, so the page has depth without decoration. */}
-      <div className="bg-gradient-to-b from-scholarly-50/60 to-transparent dark:from-scholarly-500/5">
-        <div className="mx-auto max-w-6xl px-6 pt-10">
-          <div className="flex items-center gap-2.5">
-            <span className="text-2xl" aria-hidden>📚</span>
+      <div className="relative overflow-hidden bg-gradient-to-br from-scholarly-50 via-surface to-violet-50/40 dark:from-scholarly-500/10 dark:via-surface dark:to-violet-500/5">
+        {/* Two soft washes rather than a flat tint, so the hero has depth
+            without anything competing with the text on top of it. */}
+        <div className="pointer-events-none absolute -left-32 -top-32 h-96 w-96 rounded-full bg-scholarly-400/20 blur-3xl dark:bg-scholarly-500/10" aria-hidden />
+        <div className="pointer-events-none absolute -right-20 top-40 h-80 w-80 rounded-full bg-violet-400/15 blur-3xl dark:bg-violet-500/10" aria-hidden />
+        <div className="relative mx-auto max-w-6xl px-6 pt-10">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-gradient-to-br from-scholarly-500 to-scholarly-700 p-2.5 shadow-lg shadow-scholarly-500/25">
+              <BookOpen className="h-5 w-5 text-white" aria-hidden />
+            </div>
             <span className="font-serif text-lg text-ink">ScholarMind</span>
           </div>
 
@@ -251,10 +263,10 @@ const SignIn: React.FC = () => {
 
               <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-subtle">
                 <span className="inline-flex items-center gap-1.5">
-                  <Quote className="h-3.5 w-3.5" aria-hidden /> Citations from the source, not the model
+                  <Quote className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden /> Citations from the source, not the model
                 </span>
                 <span className="inline-flex items-center gap-1.5">
-                  <Share2 className="h-3.5 w-3.5" aria-hidden /> Shared across a team
+                  <Share2 className="h-3.5 w-3.5 text-rose-600 dark:text-rose-400" aria-hidden /> Shared across a team
                 </span>
               </div>
             </div>
@@ -272,10 +284,10 @@ const SignIn: React.FC = () => {
           <ol className="mt-8 grid gap-8 sm:grid-cols-3">
             {STEPS.map((step, i) => (
               <li key={step.title}>
-                <span className="font-serif text-3xl text-scholarly-600/40 dark:text-scholarly-400/40">
-                  {String(i + 1).padStart(2, '0')}
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-scholarly-500 to-scholarly-700 font-serif text-sm text-white shadow-md shadow-scholarly-500/25">
+                  {i + 1}
                 </span>
-                <h3 className="mt-2 font-medium text-ink">{step.title}</h3>
+                <h3 className="mt-3 font-medium text-ink">{step.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted">{step.body}</p>
               </li>
             ))}
@@ -285,13 +297,15 @@ const SignIn: React.FC = () => {
         <section className="border-t border-line py-16">
           <h2 className="font-serif text-2xl text-ink">What it does</h2>
           <div className="mt-8 grid gap-x-10 gap-y-9 sm:grid-cols-2">
-            {FEATURES.map(({ icon: Icon, title, body }) => (
-              <div key={title}>
-                <div className="flex items-center gap-2.5">
-                  <Icon className="h-4 w-4 text-scholarly-600 dark:text-scholarly-400" aria-hidden />
-                  <h3 className="font-medium text-ink">{title}</h3>
+            {FEATURES.map(({ icon: Icon, tint, title, body }) => (
+              <div key={title} className="flex gap-4">
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tint}`}>
+                  <Icon className="h-5 w-5" aria-hidden />
                 </div>
-                <p className="mt-2 text-sm leading-relaxed text-muted">{body}</p>
+                <div>
+                  <h3 className="font-medium text-ink">{title}</h3>
+                  <p className="mt-1.5 text-sm leading-relaxed text-muted">{body}</p>
+                </div>
               </div>
             ))}
           </div>
@@ -300,7 +314,7 @@ const SignIn: React.FC = () => {
         {/* The claim worth making explicitly, because it is the one that
             separates this from a chatbot with a search box. */}
         <section className="border-t border-line py-16">
-          <blockquote className="max-w-3xl">
+          <blockquote className="max-w-3xl rounded-2xl border border-scholarly-200/60 bg-gradient-to-br from-scholarly-50 to-violet-50/50 p-8 dark:border-scholarly-500/20 dark:from-scholarly-500/10 dark:to-violet-500/5">
             <p className="font-serif text-xl leading-relaxed text-ink sm:text-2xl">
               An advisor whose work does not cover your question will tell you so.
             </p>
