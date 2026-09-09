@@ -4,6 +4,8 @@ import { Citation, Paper, Message, ScholarData, AppState } from '../types';
 import { Theme } from './theme';
 import * as api from '../services/api';
 import AdvisorSettings from './AdvisorSettings';
+import UndoToast from './UndoToast';
+import { useDeferredAction } from './useDeferredAction';
 import PaperList from './PaperList';
 import BlogReader from './BlogReader';
 import CiteDialog from './CiteDialog';
@@ -43,6 +45,10 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [showAdvisorSettings, setShowAdvisorSettings] = useState(false);
+
+  // Destructive actions run at once and commit after an undo window, so none of
+  // them stops to ask.
+  const { pending, defer } = useDeferredAction();
 
   // Selection State
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(new Set());
@@ -221,25 +227,42 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     });
   }, []);
 
-  const handleClearSession = async () => {
+  /** Empties the library, recoverably until the window closes. */
+  const handleClearSession = () => {
     if (!profile) return;
-    if (!window.confirm("Are you sure you want to clear all papers and chat history from this profile?")) return;
-    await Promise.all([
-      api.clearMessages(profile.id),
-      ...papers.map(paper => api.deletePaper(profile.id, paper.id)),
-    ]);
-    setPapers([]);
-    setChatMessages([]);
-    setAppState(AppState.IDLE);
-    setSelectedPaperIds(new Set());
-    setScholarName('');
+    const paperSnapshot = papers;
+    const messageSnapshot = chatMessages;
+    const selectionSnapshot = selectedPaperIds;
+    if (!paperSnapshot.length && !messageSnapshot.length) return;
+
+    defer(
+      `clear-${profile.id}`,
+      `${paperSnapshot.length} source${paperSnapshot.length === 1 ? '' : 's'} and the chat`,
+      () => {
+        setPapers([]);
+        setChatMessages([]);
+        setAppState(AppState.IDLE);
+        setSelectedPaperIds(new Set());
+        setScholarName('');
+      },
+      () => {
+        void Promise.all([
+          api.clearMessages(profile.id),
+          ...paperSnapshot.map(paper => api.deletePaper(profile.id, paper.id)),
+        ]).catch(e => console.error('Could not clear the library:', e));
+      },
+      () => {
+        setPapers(paperSnapshot);
+        setChatMessages(messageSnapshot);
+        setSelectedPaperIds(selectionSnapshot);
+        setAppState(AppState.READY);
+      }
+    );
   };
 
-  const handleDeleteProfile = () => {
-     if (window.confirm("Are you sure you want to delete this profile completely? This action cannot be undone.")) {
-         onDelete();
-     }
-  };
+  // The undo window lives with the profile list, which is where the library
+  // reappears if this is taken back.
+  const handleDeleteProfile = () => onDelete();
 
   const runSearch = async (query: string, allowDuplicate: boolean) => {
     if (!profile) return;
@@ -909,6 +932,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
         />
       )}
 
+      <UndoToast pending={pending} />
     </div>
   );
 };

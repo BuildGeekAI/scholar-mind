@@ -360,6 +360,8 @@ export const searchLibraries = (
 // --- Identity ---------------------------------------------------------------
 
 export interface Me {
+  /** This caller's own user id, for deciding what they own. */
+  userId: string;
   email: string;
   name?: string;
   picture?: string;
@@ -539,6 +541,8 @@ export const streamChat = (
   onDone?: (info: {
     grounded: boolean;
     fellBack?: boolean;
+    /** The chosen libraries had nothing on this, and the web was not asked for. */
+    emptyHanded?: boolean;
     indexed?: number;
     pending?: number;
     searchedLibraries?: string[];

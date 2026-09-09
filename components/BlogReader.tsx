@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Paper } from '../types';
 import { X, FileText, MonitorPlay, Play, Loader2, BrainCircuit, Layers, Check, ChevronLeft, ChevronRight, RotateCw, Calendar, Quote, Clock, Copy, Download, Square, Mic, Volume2, Radio } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import Markdown from './Markdown';
 import { playAudioUrl, playAudioBlob, stopAudio } from '../utils/audio';
 import { blobUrl, speak } from '../services/api';
 
@@ -442,9 +442,9 @@ const BlogReader: React.FC<BlogReaderProps> = ({ paper, onClose }) => {
                 </div>
 
                 <div className="font-serif text-lg leading-relaxed text-ink">
-                  <ReactMarkdown components={markdownComponents}>
+                  <Markdown components={markdownComponents}>
                     {paper.blogContent || ""}
-                  </ReactMarkdown>
+                  </Markdown>
                 </div>
               </div>
             </div>

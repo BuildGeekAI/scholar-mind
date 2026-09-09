@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Message } from '../types';
 import { Send, Bot, User, Sparkles, Search, X, PanelRightClose, Mic, MicOff, FileText } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import Markdown from './Markdown';
 
 interface ChatInterfaceProps {
   messages: Message[];
@@ -187,7 +187,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, onSendMessage, 
                     : 'bg-panel border border-line text-ink rounded-bl-none shadow-sm'
                 }`}
               >
-                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                <Markdown compact>{msg.content}</Markdown>
 
                 {/* Sources File Search actually retrieved for this answer. */}
                 {!!msg.citations?.length && (
