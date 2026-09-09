@@ -629,6 +629,28 @@ export const createRouter = () => {
     /** Passages retrieved from Postgres, for the cross-library case. */
     let passages: Awaited<ReturnType<typeof search>> = [];
 
+    /**
+     * Whether the chosen library has anything to say about this question.
+     *
+     * File Search always "succeeds": it retrieves what it can, and if nothing is
+     * relevant the model answers from its own general knowledge anyway. Asking a
+     * library of the Bhagavad Gita about something it has never touched produced
+     * a confident answer sourced from nowhere in it.
+     *
+     * So the same structural guard the advisors use applies here: a cheap
+     * keyword pass over the Postgres index decides whether there is anything to
+     * ground on, and an empty result means the model is not asked at all. A
+     * prompt instruction to abstain is advice; not making the call is a
+     * guarantee.
+     *
+     * The trade-off is real and deliberate: Postgres holds each paper's prose
+     * while File Search holds its full text, so this can occasionally decline a
+     * question the full text does covers. Declining is recoverable — the answer
+     * says so and the web tab is one click away — where answering from nowhere
+     * is not, because nothing marks it as ungrounded.
+     */
+    let relevant = true;
+
     if (profile) {
       // One library: File Search, because it holds the papers' *full text* while
       // the Postgres index holds their prose, and the five-store cap is
@@ -638,6 +660,15 @@ export const createRouter = () => {
       total = papers.length;
       if (profile.fileSearchStoreName && indexed) storeNames = [profile.fileSearchStoreName];
       searchedLibraries = indexed ? [profile.title] : [];
+
+      if (!useWebSearch && storeNames.length) {
+        const probe = await search(c.get('ctx'), message, {
+          scope: 'profile',
+          profileId: profile.id,
+          limit: 1,
+        }).catch(() => []);
+        relevant = probe.length > 0;
+      }
     } else if (!useWebSearch) {
       /**
        * Across every library: Postgres, not File Search.
@@ -653,11 +684,21 @@ export const createRouter = () => {
       total = passages.length;
     }
 
-    const grounded = !useWebSearch && (storeNames.length > 0 || passages.length > 0);
+    const grounded = !useWebSearch && relevant && (storeNames.length > 0 || passages.length > 0);
+
+    /**
+     * Nothing to ground on, and the web was not what was asked for.
+     *
+     * The old behaviour here was to quietly attach `google_search` instead —
+     * so selecting a library and asking something it does not cover returned a
+     * web answer wearing that library's name. Saying so is the honest outcome,
+     * and it is one the caller can act on.
+     */
+    const emptyHanded = !useWebSearch && !grounded;
 
     // Passages are already in the prompt, so no tool is attached for the
     // cross-library case — which is also why it composes with anything.
-    const tools = storeNames.length
+    const tools = storeNames.length && relevant
       ? [fileSearchTool(storeNames)]
       : passages.length
         ? []
@@ -679,7 +720,7 @@ export const createRouter = () => {
 articles, recordings and videos.`;
 
     const instruction = storeNames.length
-      ? 'Answer using the indexed papers available through file search, and cite them.'
+      ? 'Answer only from the indexed papers available through file search, and cite them. If they do not actually address the question, say so plainly rather than answering from general knowledge.'
       : passages.length
         ? 'Answer only from the passages below, naming the library and paper each point comes from. If they do not cover the question, say so.'
         : 'Answer using live web search.';
@@ -698,6 +739,35 @@ User: ${message}`;
 
     return streamSSE(c, async stream => {
       try {
+        if (emptyHanded) {
+          const where = profile
+            ? `“${profile.title}”`
+            : searchedLibraries.length
+              ? 'your libraries'
+              : 'your libraries';
+          const why =
+            profile && !indexed
+              ? `${where} has nothing indexed yet — index its sources first.`
+              : `Nothing in ${where} addresses that.`;
+
+          await stream.writeSSE({
+            event: 'delta',
+            data: JSON.stringify({ text: `${why} Switch to the web to ask anyway.` }),
+          });
+          await stream.writeSSE({
+            event: 'done',
+            data: JSON.stringify({
+              grounded: false,
+              emptyHanded: true,
+              indexed,
+              pending: total - indexed,
+              searchedLibraries: [],
+              skippedLibraries,
+            }),
+          });
+          return;
+        }
+
         const result: any = await (ai().interactions as any).create({
           // Grounded turns must stay on the Gemini model; a turn carrying its
           // passages inline attaches nothing and can run anywhere.

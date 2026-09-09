@@ -539,6 +539,8 @@ export const streamChat = (
   onDone?: (info: {
     grounded: boolean;
     fellBack?: boolean;
+    /** The chosen libraries had nothing on this, and the web was not asked for. */
+    emptyHanded?: boolean;
     indexed?: number;
     pending?: number;
     searchedLibraries?: string[];

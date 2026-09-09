@@ -26,6 +26,8 @@ export interface Turn {
   from?: string;
   citations?: Citation[];
   pending?: boolean;
+  /** Declined for lack of anything to ground on, rather than answered. */
+  emptyHanded?: boolean;
 }
 
 interface Props {
@@ -134,12 +136,17 @@ const ChatPane: React.FC<Props> = ({
             },
             info =>
               patch({
-                // Which libraries contributed, not which were asked.
-                from: info.searchedLibraries?.length
-                  ? info.searchedLibraries.join(', ')
-                  : focus === 'web'
-                    ? 'The web'
-                    : undefined,
+                // Which libraries contributed, not which were asked. An
+                // empty-handed answer is labelled as such, so a refusal is not
+                // mistaken for a poor answer.
+                from: info.emptyHanded
+                  ? 'Nothing found'
+                  : info.searchedLibraries?.length
+                    ? info.searchedLibraries.join(', ')
+                    : focus === 'web'
+                      ? 'The web'
+                      : undefined,
+                emptyHanded: info.emptyHanded,
                 pending: false,
               }),
             message => { setError(message); patch({ pending: false }); },
@@ -213,7 +220,9 @@ const ChatPane: React.FC<Props> = ({
               ) : (
                 <article key={turn.id}>
                   {turn.from && (
-                    <p className="mb-1.5 text-xs font-medium text-muted">{turn.from}</p>
+                    <p className={`mb-1.5 text-xs font-medium ${turn.emptyHanded ? 'text-amber-600 dark:text-amber-400' : 'text-muted'}`}>
+                      {turn.from}
+                    </p>
                   )}
                   {turn.pending && !turn.text ? (
                     <p className="flex items-center gap-2 text-sm text-muted">
