@@ -433,6 +433,8 @@ export const revokeApiKey = (id: string): Promise<void> => send(`/keys/${id}`, '
 export interface Advisor extends ProfileRecord {
   /** Papers in the search index. An advisor with none has nothing to draw on. */
   indexedCount: number;
+  /** How many hold real content rather than just an abstract. */
+  deepCount: number;
   mine: boolean;
 }
 

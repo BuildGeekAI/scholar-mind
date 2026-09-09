@@ -60,6 +60,32 @@ const BASE_JOIN = `
     JOIN papers   pa ON pa.profile_id = d.profile_id AND pa.id = d.paper_id
     JOIN profiles p  ON p.id = d.profile_id`;
 
+/**
+ * The keyword query, built by OR-ing the question's lexemes and ranking.
+ *
+ * `websearch_to_tsquery` — the obvious choice, and what this used first — ANDs
+ * every term. That is right for a search box and catastrophic for a question:
+ * "what do you think about neural networks" requires a chunk containing *think*
+ * as well, and no paper contains "think", so the whole thing matches nothing.
+ * Every conversational question returned zero results and every advisor
+ * abstained, which read as the feature being broken rather than the query being
+ * wrong.
+ *
+ * OR-ing them and ranking gives what a search engine gives: chunks matching more
+ * of the question rank higher, and one missing word does not eliminate a
+ * passage. `ts_rank_cd` weights proximity, so terms appearing together beat the
+ * same terms scattered.
+ *
+ * Lexemising the question with `to_tsvector` before rebuilding it also means no
+ * raw user text reaches `to_tsquery`, where `&`, `|` and `!` would otherwise be
+ * operators.
+ */
+const OR_QUERY = `
+  to_tsquery(
+    'english',
+    array_to_string(tsvector_to_array(to_tsvector('english', $2)), ' | ')
+  )`;
+
 const SELECT_COLUMNS = `
     SELECT c.id AS chunk_id, c.text, c.ordinal,
            pa.id AS paper_id, pa.title AS paper_title,
@@ -79,7 +105,7 @@ const keywordSearch = async (
   return many<Row>(
     `${SELECT_COLUMNS}
        ${BASE_JOIN},
-            websearch_to_tsquery('english', $2) AS query
+            ${OR_QUERY} AS query
       WHERE c.tsv @@ query
         AND ($4::text IS NULL OR p.id = $4)
         AND ${visibilityPredicate('p', '$1', 'view')}
@@ -156,6 +182,10 @@ export interface SearchOptions {
 export const search = async (ctx: Ctx, q: string, options: SearchOptions = {}): Promise<Hit[]> => {
   const query = (q || '').trim();
   if (!query) return [];
+
+  // A question made only of stopwords lexemises to nothing, which is a legitimate
+  // no-match rather than an error — but there is no point asking the database.
+  if (!/[a-z0-9]/i.test(query)) return [];
 
   const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
   const scope = options.scope ?? 'org';

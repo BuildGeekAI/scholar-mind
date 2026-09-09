@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { one, query } from './db';
+import { one, query, transaction } from './db';
 
 /**
  * Browser sessions, and the policy for who may open one.
@@ -84,32 +84,69 @@ export const signIn = async (
 ): Promise<{ token: string; user: SessionUser }> => {
   const externalId = `${identity.provider}:${identity.subject}`;
 
-  const user = await one(
-    `INSERT INTO users (external_id, email, display_name, picture, auth_provider)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (external_id) DO UPDATE SET
-       email = EXCLUDED.email,
-       display_name = COALESCE(EXCLUDED.display_name, users.display_name),
-       picture = COALESCE(EXCLUDED.picture, users.picture)
-     RETURNING id, external_id, email, display_name, picture`,
-    [externalId, identity.email, identity.name ?? null, identity.picture ?? null, identity.provider]
-  );
+  const user = await transaction(async tx => {
+    // The provider's subject is the identity. Ordinary case: we have seen it.
+    const known = await tx.query(
+      `UPDATE users
+          SET email = $2,
+              display_name = COALESCE($3, display_name),
+              picture = COALESCE($4, picture)
+        WHERE external_id = $1
+        RETURNING id, external_id, email, display_name, picture`,
+      [externalId, identity.email, identity.name ?? null, identity.picture ?? null]
+    );
+    if (known.rows[0]) return known.rows[0];
+
+    /**
+     * A new subject carrying an address we already hold.
+     *
+     * Happens whenever the provider mints a new id for the same person — an
+     * account deleted and re-created, or a move between providers. The address
+     * is unique by design, because sharing addresses people by email and two
+     * rows for one address would make that ambiguous. So the row is *adopted*
+     * rather than duplicated, and the person keeps their libraries.
+     *
+     * Safe because the caller has already established that the provider
+     * verified this address, and control of the inbox is what ownership of an
+     * account means here. Without this the insert violates the unique index and
+     * sign-in fails with an opaque 500.
+     */
+    const adopted = await tx.query(
+      `UPDATE users
+          SET external_id = $1,
+              auth_provider = $5,
+              display_name = COALESCE($3, display_name),
+              picture = COALESCE($4, picture)
+        WHERE lower(email) = lower($2)
+        RETURNING id, external_id, email, display_name, picture`,
+      [externalId, identity.email, identity.name ?? null, identity.picture ?? null, identity.provider]
+    );
+    if (adopted.rows[0]) return adopted.rows[0];
+
+    const created = await tx.query(
+      `INSERT INTO users (external_id, email, display_name, picture, auth_provider)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, external_id, email, display_name, picture`,
+      [externalId, identity.email, identity.name ?? null, identity.picture ?? null, identity.provider]
+    );
+    return created.rows[0];
+  });
 
   const token = randomToken();
   await query(
     `INSERT INTO sessions (user_id, token_hash, expires_at, user_agent)
      VALUES ($1, $2, now() + make_interval(days => $3), $4)`,
-    [user!.id, hash(token), SESSION_DAYS, (userAgent ?? '').slice(0, 300) || null]
+    [user.id, hash(token), SESSION_DAYS, (userAgent ?? '').slice(0, 300) || null]
   );
 
   return {
     token,
     user: {
-      userId: user!.id,
-      externalId: user!.external_id,
-      email: user!.email,
-      name: user!.display_name ?? undefined,
-      picture: user!.picture ?? undefined,
+      userId: user.id,
+      externalId: user.external_id,
+      email: user.email,
+      name: user.display_name ?? undefined,
+      picture: user.picture ?? undefined,
     },
   };
 };

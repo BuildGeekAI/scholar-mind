@@ -444,6 +444,42 @@ describe.skipIf(!url)('multi-tenant access control, against Postgres', () => {
       expect(second.user.email).toBe('after@example.com');
     });
 
+    /**
+     * The provider re-issues an id for the same person — an account deleted and
+     * re-created, or a move between providers. The address is unique by design,
+     * so a naive insert violates the index and sign-in fails with an opaque 500.
+     * The person must keep their libraries.
+     */
+    it('adopts the existing person when a new subject brings a known address', async () => {
+      const first = await auth.signIn(google('adopt-1', 'adopted@example.com'));
+
+      // Something owned by this person before the provider changed its mind.
+      await repo.createProfile(
+        { userId: first.user.userId, orgId: ORG_A, teamId: TEAM_A1, email: 'adopted@example.com' },
+        { id: 'kept-library', title: 'Kept' }
+      );
+
+      const second = await auth.signIn(google('adopt-2', 'adopted@example.com'));
+      expect(second.user.userId).toBe(first.user.userId);
+
+      const ctx = {
+        userId: second.user.userId,
+        orgId: ORG_A,
+        teamId: TEAM_A1,
+        email: 'adopted@example.com',
+      };
+      expect(await repo.getProfile(ctx, 'kept-library')).not.toBeNull();
+    });
+
+    it('leaves one row per address, so sharing by email stays unambiguous', async () => {
+      await auth.signIn(google('unique-1', 'onlyone@example.com'));
+      await auth.signIn(google('unique-2', 'onlyone@example.com'));
+      const row = await db.one<{ n: string }>(
+        `SELECT count(*) AS n FROM users WHERE lower(email) = 'onlyone@example.com'`
+      );
+      expect(Number(row!.n)).toBe(1);
+    });
+
     it('rejects a forged cookie of the right shape', async () => {
       expect(await auth.verifySession('a'.repeat(64))).toBeNull();
     });
@@ -695,6 +731,124 @@ describe.skipIf(!url)('multi-tenant access control, against Postgres', () => {
           expect(citation.profileId).toBe(`panel-${i}`);
         }
       }
+    });
+  });
+
+  describe('retrieval for questions, not search boxes', () => {
+    /**
+     * The bug that made advisors unusable.
+     *
+     * `websearch_to_tsquery` ANDs every term, which is right for a search box
+     * and catastrophic for a question: "what do you think about overfitting"
+     * requires a chunk containing *think*, and no paper contains "think". Four
+     * of five natural questions returned nothing, so advisors abstained on
+     * almost everything and read as broken.
+     */
+    beforeAll(async () => {
+      const indexer = await import('../../server/indexer');
+      await repo.createProfile(alice(), { id: 'nlq', title: 'Natural language questions' });
+      const paper: any = {
+        id: 'bp',
+        title: 'Learning Representations by Back-Propagating Errors',
+        authors: ['Rumelhart'],
+        year: '1986',
+        summary:
+          'We describe a new learning procedure, back-propagation, for networks of neurone-like units. ' +
+          'The procedure repeatedly adjusts the weights of the connections in the network so as to ' +
+          'minimize a measure of the difference between the actual output vector and the desired output.',
+        status: 'discovered',
+      };
+      await repo.upsertPaper('nlq', paper);
+      await indexer.indexPaper('nlq', paper);
+    });
+
+    const ask = (question: string) =>
+      search.search(alice(), question, { scope: 'profile', profileId: 'nlq' });
+
+    it('finds the passage when the question is phrased conversationally', async () => {
+      // Every one of these returned zero under AND semantics.
+      for (const question of [
+        'How do you train a network to minimize error?',
+        'What do you think about adjusting connection weights?',
+        'Tell me about your work on learning procedures',
+      ]) {
+        const hits = await ask(question);
+        expect(hits.length, question).toBeGreaterThan(0);
+      }
+    });
+
+    it('still finds nothing for a genuinely unrelated question', async () => {
+      // The abstain guard depends on this: OR retrieval must not match
+      // everything, or an advisor answers confidently from nothing.
+      expect(await ask('How should I bake sourdough bread?')).toEqual([]);
+    });
+
+    it('ranks a passage matching more of the question higher', async () => {
+      const indexer = await import('../../server/indexer');
+      const other: any = {
+        id: 'unrelated',
+        title: 'A paper about weights only',
+        authors: [],
+        summary: 'Weights are discussed here and nothing else is.',
+        status: 'discovered',
+      };
+      await repo.upsertPaper('nlq', other);
+      await indexer.indexPaper('nlq', other);
+
+      const hits = await ask('learning procedure that adjusts weights to minimize output error');
+      expect(hits.length).toBeGreaterThan(1);
+      expect(hits[0].paperId).toBe('bp');
+    });
+
+    it('treats a question of pure stopwords as no match, not an error', async () => {
+      await expect(ask('what is the of and a')).resolves.toEqual([]);
+      await expect(ask('   ')).resolves.toEqual([]);
+    });
+
+    it('is not confused by tsquery operators typed into a question', async () => {
+      // The question is lexemised before being rebuilt, so & | ! ( ) are text.
+      await expect(ask('what about weights & networks | (error)!')).resolves.toBeInstanceOf(Array);
+    });
+  });
+
+  describe('advisor depth', () => {
+    it('reports how many sources hold more than an abstract', async () => {
+      const indexer = await import('../../server/indexer');
+      await repo.createProfile(alice(), {
+        id: 'depth',
+        title: 'Depth',
+        advisorEnabled: true,
+        advisorName: 'Thin Advisor',
+      });
+
+      const thin: any = { id: 't1', title: 'Abstract only', authors: [], summary: 'One sentence.', status: 'discovered' };
+      const deep: any = { id: 't2', title: 'Full text', authors: [], summary: 'One sentence.',
+                          extractedText: 'A great deal of actual content lives here.', status: 'discovered' };
+      for (const p of [thin, deep]) {
+        await repo.upsertPaper('depth', p);
+        await indexer.indexPaper('depth', p);
+      }
+
+      const advisor = (await repo.listAdvisors(alice())).find(a => a.id === 'depth');
+      expect(advisor!.indexedCount).toBe(2);
+      expect(advisor!.deepCount).toBe(1);
+    });
+
+    it('indexes a paper’s extracted text, not just its abstract', async () => {
+      const indexer = await import('../../server/indexer');
+      const paper: any = {
+        id: 'extracted',
+        title: 'Has full text',
+        authors: [],
+        summary: 'Short abstract.',
+        extractedText: 'Distinctive quetzal passage that appears only in the full text.',
+        status: 'discovered',
+      };
+      await repo.upsertPaper('depth', paper);
+      await indexer.indexPaper('depth', paper);
+
+      const hits = await search.search(alice(), 'quetzal', { scope: 'profile', profileId: 'depth' });
+      expect(hits.map(h => h.paperId)).toContain('extracted');
     });
   });
 

@@ -282,6 +282,15 @@ export const findByScholarKeys = async (ctx: Ctx, keys: string[]): Promise<Profi
 export interface AdvisorSummary extends ProfileRecord {
   /** Papers actually in the search index. An advisor with none knows nothing. */
   indexedCount: number;
+  /**
+   * How many of those hold real content rather than just an abstract.
+   *
+   * A crawled-and-indexed paper is roughly 200 characters: title, authors, year
+   * and one sentence. An advisor built only from those can find its papers by
+   * name and little else — and without being told, a user concludes the advisor
+   * is stupid rather than that the library is thin.
+   */
+  deepCount: number;
   /** Whether the caller owns this advisor or is consulting someone else's. */
   mine: boolean;
 }
@@ -297,7 +306,11 @@ export const listAdvisors = async (ctx: Ctx): Promise<AdvisorSummary[]> =>
   (
     await many(
       `SELECT ${PROFILE_COLUMNS},
-              (SELECT count(*) FROM documents d WHERE d.profile_id = p.id) AS indexed_count
+              (SELECT count(*) FROM documents d WHERE d.profile_id = p.id) AS indexed_count,
+              (SELECT count(*) FROM papers pa
+                WHERE pa.profile_id = p.id
+                  AND (coalesce(pa.extracted_text, '') <> '' OR coalesce(pa.blog_content, '') <> ''))
+                AS deep_count
          FROM profiles p
         WHERE p.advisor_enabled
           AND ${visibilityPredicate('p', '$1', 'view')}
@@ -307,6 +320,7 @@ export const listAdvisors = async (ctx: Ctx): Promise<AdvisorSummary[]> =>
   ).map(r => ({
     ...toProfile(r),
     indexedCount: Number(r.indexed_count ?? 0),
+    deepCount: Number(r.deep_count ?? 0),
     mine: r.owner_id === ctx.userId,
   }));
 

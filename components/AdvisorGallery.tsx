@@ -70,6 +70,13 @@ const AdvisorGallery: React.FC<Props> = ({ onConsult, onOpenProfile }) => {
           Answers are grounded in each advisor's published work and cite the passages they came
           from. An advisor whose work does not cover a question will say so.
         </p>
+        {/* The single most common reason an advisor disappoints. */}
+        {ready.some(a => a.deepCount === 0) && (
+          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
+            Some advisors below hold only abstracts. Indexing makes a paper findable;
+            <span className="font-medium"> Generate</span> is what puts its substance in reach.
+          </p>
+        )}
       </header>
 
       <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -102,6 +109,18 @@ const AdvisorGallery: React.FC<Props> = ({ onConsult, onOpenProfile }) => {
                       {advisor.indexedCount === 1 ? 'source' : 'sources'}
                       {!advisor.mine && ' · shared with you'}
                     </p>
+                    {/* Said plainly, because otherwise a thin library reads as a
+                        stupid advisor and the user has no way to tell which. */}
+                    {advisor.deepCount === 0 ? (
+                      <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                        Abstracts only — answers will be shallow. Run{' '}
+                        <span className="font-medium">Generate</span> on its sources.
+                      </p>
+                    ) : advisor.deepCount < advisor.indexedCount ? (
+                      <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                        {advisor.deepCount} of {advisor.indexedCount} with full text
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               </button>

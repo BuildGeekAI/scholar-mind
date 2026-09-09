@@ -78,7 +78,22 @@ export const chunkText = (
   return chunks;
 };
 
-/** Everything worth indexing about a paper, in the order a reader would meet it. */
+/**
+ * Everything worth indexing about a paper, in the order a reader would meet it.
+ *
+ * How much there is varies enormously, and that is the single biggest factor in
+ * whether retrieval — and therefore an advisor — is any good:
+ *
+ *  - Indexed only (what a crawl does): title, authors, year and a one-sentence
+ *    abstract. Around 200 characters. Enough to find a paper by name, and not
+ *    much else.
+ *  - `extractedText` present (an upload, a page, a transcript): the real content.
+ *  - Enriched as well (`mode: 'both'`): plus the write-up and slides, which is
+ *    several thousand words of actual substance.
+ *
+ * `extractedText` was previously read only for non-paper sources, which meant a
+ * PDF whose text we already held was indexed as its abstract anyway.
+ */
 export const documentBody = (paper: Paper): string => {
   const isPaper = (paper.kind ?? 'paper') === 'paper';
   if (!isPaper) return indexableText(paper);
@@ -89,6 +104,8 @@ export const documentBody = (paper: Paper): string => {
     '',
     paper.summary ?? '',
     '',
+    paper.extractedText ?? '',
+    '',
     paper.blogContent ?? '',
     '',
     ...(paper.slides ?? []).map(s => `${s.title}: ${s.points.join(' ')}`),
@@ -96,6 +113,13 @@ export const documentBody = (paper: Paper): string => {
     .join('\n')
     .trim();
 };
+
+/**
+ * Roughly how much an advisor has to draw on. Used to tell a user that a library
+ * is thin *before* they conclude the advisor is stupid.
+ */
+export const bodyDepth = (paper: Paper): 'abstract' | 'full' =>
+  (paper.extractedText || paper.blogContent) ? 'full' : 'abstract';
 
 // --- Embeddings ---------------------------------------------------------------
 
