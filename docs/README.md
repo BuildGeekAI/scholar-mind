@@ -29,6 +29,7 @@ flowchart LR
 | ☁️ | **[Deployment](deployment/README.md)** | Provisioning GCP from nothing, written from an actual run — including what went wrong |
 | 📋 | **[SDLC](sdlc/README.md)** | The plan → implement → test → release loop this repository is built with |
 | ⚖️ | **[Comparison](comparison/README.md)** | Who else does this, and where ScholarMind loses to them. Written to be honest rather than flattering |
+| 🧭 | **[Roadmap](plan/README.md)** | What is being built next and in what order — and what is deliberately not being built |
 
 Plus **[`CLAUDE.md`](../CLAUDE.md)** at the root: the constraints and conventions
 that are load-bearing, written for whoever changes the code next. If you read one
