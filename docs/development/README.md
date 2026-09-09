@@ -80,6 +80,35 @@ migrations apply normally and **search runs keyword-only**. That is invisible in
 the tests and obvious in use: a question phrased unlike the source text returns
 little or nothing.
 
+### Choosing models
+
+Grounded and ungrounded calls are separate settings, because only one of them is
+free to change.
+
+Anything using `google_search`, `url_context` or `file_search` stays on
+`gemini-3.8-flash`. A search that quietly stops grounding does not error — it
+returns a fluent, invented publication list, and nothing downstream can tell the
+difference.
+
+Calls attaching **no tools** read `PLAIN_TEXT_MODEL`: advisor answers, panel
+synthesis, cross-library chat and the structuring pass all carry their passages
+in the prompt, so they need nothing Gemini-specific.
+
+```bash
+GEMINI_API_KEY=… npm run spike:models          # what this key can see
+GEMINI_API_KEY=… npm run spike:models gemma-3-27b-it   # test a candidate
+```
+
+The spike reports a model *refusing* an attached tool as the good outcome. The
+dangerous case is one that accepts `google_search` and ignores it: that looks
+like success and grounds nothing.
+
+`SCHOLAR_PAPER_LIMIT` (default 20, capped at 50) controls how many publications
+one scholar search asks for. It is a single grounded generation, so beyond that
+the answer degrades rather than fails.
+
+---
+
 ### Access control locally
 
 `ACL_ENABLED` defaults off outside production, so every request is the dev user

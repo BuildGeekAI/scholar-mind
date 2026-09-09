@@ -43,6 +43,26 @@ Each profile is an independent library — its own papers, chat history, theme, 
 
 ## 2. The landing page
 
+One question box. What it asks is a visible choice, not a guess:
+
+| Target | Answers from |
+| --- | --- |
+| **All my libraries** | Everything you can reach, in one query |
+| **One library** | That library's papers, in full |
+| **An advisor** | A scholar's published work, in their register. Pick several for a panel |
+| **The web** | Live search, no library at all |
+
+Whichever you pick, the answer names where it came from — the libraries that
+actually contributed, not the ones that were asked — and shows the passages
+behind it.
+
+Below the box, your libraries, filterable by subject. Subjects come from the
+topics found when each scholar was searched, so there is nothing to tag.
+
+---
+
+## 2b. Finding things
+
 The app opens on a question, not a file list.
 
 **Find a library** searches what you already have — by scholar, Google Scholar
@@ -281,6 +301,16 @@ person's published work, answered in their register.
 Turn one on from a library's header. Give it a name, a title, and a short note on
 how it engages — its manner and standpoint, not its opinions. Everything factual
 comes from the indexed work.
+
+It then appears on the landing page beside the other things you can ask, so
+consulting one is not a journey.
+
+**An advisor is only as deep as its library.** A paper that has been *indexed*
+carries its title, authors, year and a one-sentence abstract — enough to find,
+not enough to reason from. Running **Generate** on its sources, or uploading the
+full text, is what gives an advisor something to say. Advisors holding only
+abstracts are marked as such, so a thin library is never mistaken for a stupid
+advisor.
 
 **What an advisor is:** a way to read a body of published work through a voice,
 with every answer showing the passages it came from.

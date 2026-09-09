@@ -36,7 +36,9 @@ TEST_DATABASE_URL=postgres://…/scholarmind_test npx vitest run tests/integrati
 
 `scripts/spike-phase0*.mjs` remain the live Gemini contract check;
 `scripts/spike-postgres.mjs` checks pgvector, FTS, `SKIP LOCKED`, and **measures
-the embedding dimension** (see the migration note below).
+the embedding dimension** (see the migration note below);
+`scripts/spike-models.mjs` lists what a key can see and tests whether a
+candidate model *refuses* an attached tool or silently ignores it.
 `scripts/reconcile-stores.mjs` finds File Search stores no profile references.
 
 `.env` is required — see `.env.example`. `GEMINI_API_KEY` and `DATABASE_URL` are
@@ -84,6 +86,10 @@ server/
   sources.ts      YouTube, web, Wikipedia, uploads → extracted text
   citations.ts    BibTeX/APA/MLA/Chicago/Harvard/RIS + Crossref enrichment
   export.ts       ZIP + pcmToWav
+components/
+  SignIn.tsx      the landing page: what this is, and the sign-in form
+  Dashboard.tsx   libraries, subject filter, header and sign-out
+  AskPanel.tsx    one question box; target is a visible choice, not an inference
 services/api.ts   the browser's only server interface
 mcp/server.mjs    MCP server — a client of the HTTP API, not a second one
 ```
@@ -214,6 +220,20 @@ run with `detail.duplicate`. Cancelled, not failed: nothing broke.
 **Indexing and artifact generation are separate operations,** behind separate
 buttons and separate status fields (`indexStatus` vs `status`).
 
+**Retrieval is for questions, not for a search box.** `websearch_to_tsquery`
+ANDs every term, so "what do you think about overfitting" required a chunk
+containing *think*. Four of five conversational questions returned nothing and
+every advisor abstained. `server/search.ts` OR-s the question's lexemes and ranks
+with `ts_rank_cd`, so more matched terms wins and one missing word does not
+eliminate a passage. Lexemising the question before rebuilding it also keeps
+`&`, `|` and `!` out of `to_tsquery`.
+
+**How much a source holds decides how good retrieval is.** A crawled-and-indexed
+paper is roughly 200 characters — title, authors, year, one-sentence abstract.
+Only enrichment (`mode: 'both'`) or an `extractedText` adds real substance.
+`listAdvisors` reports `deepCount` beside `indexedCount` and the UI says so,
+because a thin library is otherwise indistinguishable from a stupid advisor.
+
 **Advisors ground in published work; they do not impersonate.** The persona
 shapes register and standpoint, never facts. The real guardrail is structural,
 not textual: an advisor with no relevant passages is **not asked at all** —
@@ -225,6 +245,28 @@ SHA-256, with a clear-text prefix for indexed lookup. A leaked database is not a
 set of live credentials.
 
 ## Models
+
+**Grounded and ungrounded calls use different models, and may use different
+model families.** Grounding — `google_search`, `url_context`, `file_search` — is
+a Gemini feature, so anything depending on it stays on `MODELS.text`. A search
+that quietly stops grounding does not error; it returns a fluent, invented
+publication list, and nothing downstream can tell.
+
+Calls attaching **no tools** read `plainModel()` (`PLAIN_TEXT_MODEL`, defaulting
+to `MODELS.text`) and can run on something cheaper or open-weights. Since
+retrieval moved to Postgres, that is a growing set: advisor answers, panel
+synthesis, cross-library chat and the structuring pass all carry their passages
+in the prompt.
+
+| Attaches | Calls | Model |
+| --- | --- | --- |
+| `google_search` | scholar search, find paper, citing papers, PDF resolution | `MODELS.text` |
+| `url_context` | reading a link or an upload | `MODELS.text` |
+| `file_search` | single-library chat, grounded generation | `MODELS.text` |
+| nothing | advisor answers, synthesis, cross-library chat, structuring | `plainModel()` |
+
+Check a candidate with `npm run spike:models` before trusting it. A model that
+*refuses* `google_search` is the good outcome.
 
 `gemini-3.8-flash` (text), `gemini-3.1-flash-image`,
 `gemini-3.1-flash-tts-preview`, `gemini-embedding-2`. Defined in `MODELS` in

@@ -74,6 +74,24 @@ still works when the publisher has since started blocking automated access.
 
 ---
 
+## Asking on the landing page
+
+One question box, and an explicit choice of what it is asking — because the four
+possibilities answer differently, and a user who cannot see which one they got
+cannot tell a bad answer from a wrong target.
+
+| Target | Answers from |
+| --- | --- |
+| **All my libraries** | Retrieval across everything you can reach, in one query. No cap |
+| **One library** | That library's full paper text, via File Search |
+| **An advisor** | That scholar's published work, in their register. Several at once asks a panel |
+| **The web** | Live search, no library |
+
+Libraries are browsable by subject, taken from the topics a scholar search
+already resolved — nothing to tag by hand.
+
+---
+
 ## Asking
 
 ```mermaid
@@ -262,7 +280,7 @@ stay on `generateContent`.
 
 ## Constraints worth knowing
 
-All four were found by testing the live API, and all four shape the design.
+All were found by testing the live API, and all shape the design.
 The third is the reason the architecture looks the way it does.
 
 **Grounding tools are mutually exclusive.** File Search combines with neither
@@ -285,6 +303,13 @@ where the cap is irrelevant.
 **The Interactions API does not take `parts`.** Media goes in as typed content
 blocks: `{type:'video', uri}` with a YouTube link works directly, no download.
 
+**Grounding is a Gemini feature, so only some calls can change model.** Anything
+using `google_search`, `url_context` or `file_search` stays on
+`gemini-3.8-flash` — a search that quietly stops grounding returns a fluent
+*invented* publication list rather than an error. Calls attaching nothing —
+advisor answers, panel synthesis, cross-library chat, the structuring pass —
+read `PLAIN_TEXT_MODEL` and can run on something cheaper or open-weights.
+
 → [The full reasoning](docs/architecture/README.md)
 
 ---
@@ -297,6 +322,7 @@ blocks: `{type:'video', uri}` with a YouTube link works directly, no download.
 | `npm run worker` | Queue worker — nothing is processed without it |
 | `npm run db:migrate` | Apply migrations (`db:reset` drops and rebuilds) |
 | `npm run spike:postgres` | Check pgvector and measure the embedding dimension |
+| `npm run spike:models` | List models a key can see; test tool-free candidates |
 | `npm test` | Vitest — pure logic, no network |
 | `npm run build` | Production client build |
 | `npm start` | Production server |

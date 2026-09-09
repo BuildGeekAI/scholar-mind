@@ -224,8 +224,14 @@ One query across every library you can reach, however many that is.
 predicate is a clause in the same query as the retrieval, so results can never
 include a library you cannot see.
 
-> Semantic retrieval requires `0004_embeddings.sql`. Without it this is
-> keyword-only and questions phrased unlike the source text return little.
+Retrieval treats the query as a **question, not a search box**: the terms are
+OR-ed and ranked, so a passage matching more of the question wins and one
+missing word does not eliminate it. Asking for something genuinely unrelated
+still returns nothing, which is what lets an advisor abstain honestly.
+
+> Semantic retrieval additionally requires `0004_embeddings.sql`. Without it
+> this is keyword-only — good enough for questions phrased in the source's own
+> vocabulary, weaker for paraphrases.
 
 ### Advisors
 
@@ -271,6 +277,26 @@ run is one execution of it.
 | `DELETE` | `/api/keys/:keyId` | Revoke, immediately |
 
 ### Asking
+
+`POST /api/chat` — `{profileId?, message, useWebSearch?}` — streams SSE.
+
+What it grounds in depends on what you pass, and the three cases use different
+machinery:
+
+| `profileId` | `useWebSearch` | Grounds in | How |
+| :--- | :--- | :--- | :--- |
+| set | false | that library's **full paper text** | File Search |
+| null | false | **every library you can reach** | Postgres retrieval, passages inline |
+| any | true | the live web | `google_search` |
+
+The cross-library case has no five-store ceiling — that limit belonged to File
+Search — and its citations are the passages actually placed in the prompt rather
+than what the model reported afterwards.
+
+The `done` event reports `searchedLibraries`: which libraries *contributed*, not
+which were asked.
+
+
 
 `POST /api/chat` — `{profileId, message, useWebSearch}` — streams SSE.
 
