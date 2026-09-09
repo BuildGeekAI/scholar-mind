@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Trash2, Search, X, Download, Sun, Moon, Users } from 'lucide-react';
+import { Plus, Trash2, Search, X, Download, Sun, Moon } from 'lucide-react';
 import { Theme } from './theme';
 import * as api from '../services/api';
 import AskPanel from './AskPanel';
@@ -11,12 +11,11 @@ interface DashboardProps {
   /** Creates a profile and immediately searches it for the given scholar. */
   onCreateFor: (query: string) => Promise<void>;
   onCreateProfile: () => void;
-  onOpenAdvisors: () => void;
   onSelectProfile: (id: string) => void;
   onDeleteProfile: (id: string, e: React.MouseEvent) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, onCreateFor, onCreateProfile, onOpenAdvisors, onSelectProfile, onDeleteProfile }) => {
+const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, onCreateFor, onCreateProfile, onSelectProfile, onDeleteProfile }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [subject, setSubject] = useState<string | null>(null);
 
@@ -106,12 +105,6 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
                     <div className="w-1 h-1 bg-muted rounded-full"></div>
                  </div>
               </button>
-              <button
-                onClick={onOpenAdvisors}
-                className="px-4 py-2.5 bg-panel border border-line rounded-lg text-sm font-medium text-ink hover:bg-surface transition-colors flex items-center gap-2 whitespace-nowrap"
-              >
-                 <Users className="w-4 h-4" /> <span className="hidden sm:inline">Advisors</span>
-              </button>
               <button 
                 onClick={onCreateProfile}
                 className="px-4 py-2.5 bg-ink text-surface rounded-full text-sm font-medium hover:opacity-90 transition-colors flex items-center gap-2 whitespace-nowrap shadow-lg shadow-black/5 dark:shadow-black/40"
@@ -121,11 +114,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
            </div>
         </div>
 
-        <AskPanel
-          libraries={profiles}
-          onOpenProfile={onSelectProfile}
-          onCreateFor={onCreateFor}
-        />
+        <AskPanel libraries={profiles} onCreateFor={onCreateFor} />
 
         {/* Content Section */}
         <div className="mb-8">

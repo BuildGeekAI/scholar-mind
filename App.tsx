@@ -5,8 +5,6 @@ import * as api from './services/api';
 import Dashboard from './components/Dashboard';
 import ProfileWorkspace from './components/ProfileWorkspace';
 import SignIn from './components/SignIn';
-import AdvisorGallery from './components/AdvisorGallery';
-import Consultation from './components/Consultation';
 
 const EMOJIS = ['🤖', '🐳', '🤝', '🦀', '🏠', '⚖️', '🛡️', '☁️', '📒', '🦙'];
 
@@ -21,10 +19,6 @@ const App: React.FC = () => {
   // null while unknown, false once the server has said it does not know us.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
 
-  // The advisor surface: the gallery picks who to ask, the consultation asks.
-  // null means neither is open and the dashboard is showing.
-  const [view, setView] = useState<'dashboard' | 'advisors'>('dashboard');
-  const [consulting, setConsulting] = useState<string[] | null>(null);
 
   useEffect(() => { applyTheme(theme); }, [theme]);
   const toggleTheme = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), []);
@@ -165,19 +159,6 @@ const App: React.FC = () => {
 
   if (signedIn === false) return <SignIn />;
 
-  if (consulting) {
-    return <Consultation advisorIds={consulting} onBack={() => setConsulting(null)} />;
-  }
-
-  if (view === 'advisors') {
-    return (
-      <AdvisorGallery
-        onConsult={setConsulting}
-        onOpenProfile={id => { setView('dashboard'); setActiveProfileId(id); }}
-      />
-    );
-  }
-
   if (activeProfileId) {
     return (
       <ProfileWorkspace
@@ -231,7 +212,6 @@ const App: React.FC = () => {
       <Dashboard
         profiles={profiles}
         onCreateProfile={handleCreateProfile}
-        onOpenAdvisors={() => setView('advisors')}
         onCreateFor={handleCreateFor}
         theme={theme}
         onToggleTheme={toggleTheme}
