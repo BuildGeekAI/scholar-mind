@@ -7,6 +7,13 @@ substitutions:
   # egressing into this network rather than through the Cloud SQL connector.
   _NETWORK: default
   _SUBNET: default
+  # Firebase Web API key — public by design, so a substitution rather than a
+  # secret. Hiding it would only break the client.
+  _FIREBASE_WEB_API_KEY: ''
+  # Who may register. '*' allows anyone, deliberately; empty refuses to start.
+  _AUTH_ALLOWED_DOMAINS: ''
+  # The origin the browser reaches, used to build absolute URLs.
+  _PUBLIC_ORIGIN: ''
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -36,7 +43,7 @@ steps:
       # ACL_ENABLED is stated rather than left to default off NODE_ENV, because
       # --set-env-vars replaces the whole variable set and this is the one
       # variable whose silent absence would be invisible in production.
-      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind,ACL_ENABLED=true
+      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind,ACL_ENABLED=true,FIREBASE_PROJECT_ID=$PROJECT_ID,FIREBASE_WEB_API_KEY=${_FIREBASE_WEB_API_KEY},AUTH_ALLOWED_DOMAINS=${_AUTH_ALLOWED_DOMAINS},PUBLIC_ORIGIN=${_PUBLIC_ORIGIN}
       - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,DATABASE_URL=scholarmind-database-url:latest
       - --min-instances=0
       - --memory=1Gi
@@ -65,7 +72,7 @@ steps:
       - --service-account=${_SERVICE}@$PROJECT_ID.iam.gserviceaccount.com
       - --command=npx
       - --args=tsx,server/worker.ts
-      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind,ACL_ENABLED=true
+      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind,ACL_ENABLED=true,AUTH_ALLOWED_DOMAINS=${_AUTH_ALLOWED_DOMAINS}
       - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,DATABASE_URL=scholarmind-database-url:latest
       - --network=${_NETWORK}
       - --subnet=${_SUBNET}

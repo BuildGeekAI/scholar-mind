@@ -1,41 +1,25 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { OAuth2Client } from 'google-auth-library';
 import { one, query } from './db';
 
 /**
- * Google sign-in, replacing IAP.
+ * Browser sessions, and the policy for who may open one.
  *
- * IAP gates access through GCP IAM: every user needs `iap.httpsResourceAccessor`
- * granted in the project, and the whole thing needs a Load Balancer and
- * certificates in front of Cloud Run. That cannot deliver self-serve signup, and
- * self-serve signup is the point of the tenancy model.
- *
- * The flow is the ordinary server-side authorization code exchange. It uses the
- * `google-auth-library` already present for IAP verification, so no new
- * dependency: `OAuth2Client` performs the exchange and verifies the returned ID
- * token's signature and audience.
+ * Deliberately provider-agnostic. This file used to run a Google OAuth
+ * authorization-code flow itself; that moved to Firebase, which handles
+ * passwords, resets, lockout and Google sign-in alike. What stayed is the part
+ * that was never about Google: a session is a row, so it can be revoked, and
+ * only a hash of the cookie is stored, so a leaked database is not a set of live
+ * logins.
  */
 
-const clientId = () => process.env.GOOGLE_OAUTH_CLIENT_ID || '';
-const clientSecret = () => process.env.GOOGLE_OAUTH_CLIENT_SECRET || '';
-
 /**
- * Where Google sends the browser back. Must match a redirect URI registered on
- * the OAuth client exactly, including scheme and port.
- */
-export const redirectUri = (): string =>
-  `${(process.env.PUBLIC_ORIGIN || 'http://localhost:3000').replace(/\/$/, '')}/api/auth/callback`;
-
-export const isConfigured = (): boolean => !!clientId() && !!clientSecret();
-
-/**
- * Domains allowed to sign in, or empty for any Google account.
+ * Domains allowed to sign in, or empty for anyone.
  *
- * Checked against the ID token's `hd` claim where there is one — a verified
- * Workspace domain — falling back to the address for consumer accounts. An
- * unset allowlist is open, which is right for a dev project and wrong for
- * anything holding real libraries: with the default profile visibility of
- * `org`, a stranger who signs into the same org can read it.
+ * Checked against a verified hosted domain where the provider asserts one,
+ * falling back to the address. An unset allowlist is open — which was merely
+ * loose when sign-in required a Google account, and is wide open now that anyone
+ * can register an address and a password. With the default profile visibility of
+ * `org`, a stranger who signs into the same org can read its libraries.
  */
 const allowedDomains = (): string[] =>
   (process.env.AUTH_ALLOWED_DOMAINS || '')
@@ -45,79 +29,20 @@ const allowedDomains = (): string[] =>
 
 export const domainAllowed = (email: string, hostedDomain?: string): boolean => {
   const allowed = allowedDomains();
-  if (!allowed.length) return true;
+  // '*' is how a deployment says "open registration, deliberately" and satisfies
+  // the startup guard. Empty means the same thing but by omission, which is the
+  // case the guard exists to catch.
+  if (!allowed.length || allowed.includes('*')) return true;
   const domain = (hostedDomain || email.split('@')[1] || '').toLowerCase();
   return allowed.includes(domain);
 };
 
-const client = () =>
-  new OAuth2Client({
-    clientId: clientId(),
-    clientSecret: clientSecret(),
-    redirectUri: redirectUri(),
-  });
-
-export interface GoogleIdentity {
-  /** Google's `sub` — stable forever, and unlike an address never reassigned. */
-  subject: string;
-  email: string;
-  name?: string;
-  picture?: string;
-  hostedDomain?: string;
-}
-
-/** The consent URL, carrying an opaque `state` the callback checks back. */
-export const authorizationUrl = (state: string): string =>
-  client().generateAuthUrl({
-    access_type: 'online',
-    scope: ['openid', 'email', 'profile'],
-    state,
-    // The account chooser, rather than silently reusing whichever Google
-    // account the browser last used — which is a real surprise on shared machines.
-    prompt: 'select_account',
-  });
-
-/**
- * Exchanges the authorization code and verifies the ID token that comes back.
- * Returns null on any failure: a bad code, a token that does not verify, or one
- * whose audience is not us.
- */
-export const exchangeCode = async (code: string): Promise<GoogleIdentity | null> => {
-  try {
-    const oauth = client();
-    const { tokens } = await oauth.getToken(code);
-    if (!tokens.id_token) return null;
-
-    // Verifies signature, issuer, audience and expiry against Google's keys.
-    // Trusting the token without this would accept anything shaped like one.
-    const ticket = await oauth.verifyIdToken({
-      idToken: tokens.id_token,
-      audience: clientId(),
-    });
-    const payload = ticket.getPayload();
-    if (!payload?.sub || !payload.email) return null;
-
-    // An unverified address must not be trusted: it would let someone sign up
-    // as an address they do not control and land in that domain's org.
-    if (payload.email_verified === false) return null;
-
-    return {
-      subject: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      picture: payload.picture,
-      hostedDomain: (payload as any).hd,
-    };
-  } catch (e) {
-    console.error('Google token exchange failed:', e);
-    return null;
-  }
-};
+/** True once *some* provider can issue sessions. */
+export const isConfigured = (): boolean => !!process.env.FIREBASE_PROJECT_ID;
 
 // --- Sessions -----------------------------------------------------------------
 
 export const SESSION_COOKIE = 'sm_session';
-export const STATE_COOKIE = 'sm_oauth_state';
 
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 30);
 
@@ -128,6 +53,17 @@ export const randomToken = (): string => randomBytes(32).toString('hex');
 /** Constant-time, so a wrong token leaks nothing by timing. */
 const digestsMatch = (a: string, b: string): boolean =>
   a.length === b.length && timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
+
+/** What a provider tells us about a person, reduced to what we store. */
+export interface ExternalIdentity {
+  /** 'firebase' today. Prefixes external_id, so providers cannot collide. */
+  provider: string;
+  /** The provider's stable id for this person — never their address. */
+  subject: string;
+  email: string;
+  name?: string;
+  picture?: string;
+}
 
 export interface SessionUser {
   userId: string;
@@ -143,20 +79,20 @@ export interface SessionUser {
  * the same person and the same libraries.
  */
 export const signIn = async (
-  identity: GoogleIdentity,
+  identity: ExternalIdentity,
   userAgent?: string
 ): Promise<{ token: string; user: SessionUser }> => {
-  const externalId = `google:${identity.subject}`;
+  const externalId = `${identity.provider}:${identity.subject}`;
 
   const user = await one(
-    `INSERT INTO users (external_id, email, display_name, picture)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (external_id, email, display_name, picture, auth_provider)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (external_id) DO UPDATE SET
        email = EXCLUDED.email,
        display_name = COALESCE(EXCLUDED.display_name, users.display_name),
        picture = COALESCE(EXCLUDED.picture, users.picture)
      RETURNING id, external_id, email, display_name, picture`,
-    [externalId, identity.email, identity.name ?? null, identity.picture ?? null]
+    [externalId, identity.email, identity.name ?? null, identity.picture ?? null, identity.provider]
   );
 
   const token = randomToken();

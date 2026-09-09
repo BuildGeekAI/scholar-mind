@@ -20,7 +20,6 @@ const App: React.FC = () => {
 
   // null while unknown, false once the server has said it does not know us.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
-  const [googleReady, setGoogleReady] = useState(false);
 
   // The advisor surface: the gallery picks who to ask, the consultation asks.
   // null means neither is open and the dashboard is showing.
@@ -60,8 +59,6 @@ const App: React.FC = () => {
         if (cancelled) return;
         setSignedIn(false);
         setLoading(false);
-        // Only needed when signed out, to decide what the sign-in screen offers.
-        api.authConfig().then(cfg => setGoogleReady(cfg.google)).catch(() => setGoogleReady(false));
       }
     })();
     return () => { cancelled = true; };
@@ -166,7 +163,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (signedIn === false) return <SignIn googleReady={googleReady} />;
+  if (signedIn === false) return <SignIn />;
 
   if (consulting) {
     return <Consultation advisorIds={consulting} onBack={() => setConsulting(null)} />;

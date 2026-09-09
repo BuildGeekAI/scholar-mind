@@ -19,18 +19,8 @@ import {
   synthesise,
   systemPrompt,
 } from './advisor';
-import {
-  SESSION_COOKIE,
-  STATE_COOKIE,
-  authorizationUrl,
-  domainAllowed,
-  exchangeCode,
-  isConfigured as googleAuthConfigured,
-  randomToken,
-  redirectUri,
-  signIn,
-  signOut,
-} from './googleAuth';
+import { SESSION_COOKIE, domainAllowed, signIn, signOut } from './session';
+import { isConfigured as firebaseConfigured, verifyFirebaseToken } from './firebaseAuth';
 import {
   deleteCrawler,
   getCrawler,
@@ -104,10 +94,11 @@ export const createRouter = () => {
     );
   });
 
-  // --- Google sign-in ------------------------------------------------------
-  // Replaces IAP. IAP gates on GCP IAM, so every user needs a role grant in the
-  // project — which cannot deliver self-serve signup, and needs a Load Balancer
-  // and certificates in front of Cloud Run to exist at all.
+  // --- Sign-in -------------------------------------------------------------
+  // Firebase Authentication is the identity provider: it owns passwords,
+  // resets, lockout and breach checking, none of which this codebase should be
+  // reimplementing. What stays here is verifying the token it issues and
+  // exchanging it for a session.
   //
   // Registered before the auth middleware, because these are the endpoints an
   // unauthenticated caller has to be able to reach.
@@ -119,8 +110,6 @@ export const createRouter = () => {
       `${name}=${encodeURIComponent(value)}`,
       'Path=/',
       'HttpOnly',
-      // Lax, not Strict: the OAuth callback is a top-level navigation *from
-      // Google*, and Strict would withhold the cookie exactly then.
       'SameSite=Lax',
       `Max-Age=${maxAgeSeconds}`,
     ];
@@ -128,51 +117,70 @@ export const createRouter = () => {
     c.header('Set-Cookie', parts.join('; '), { append: true });
   };
 
-  const clearCookie = (c: any, name: string) => setCookie(c, name, '', 0);
-
+  /**
+   * What the client needs to talk to Firebase directly.
+   *
+   * The Web API key is public by design — it identifies the project and
+   * authorises nothing on its own. Treating it as a secret only breaks the
+   * client.
+   */
   app.get('/auth/config', c =>
-    c.json({ google: googleAuthConfigured(), redirectUri: redirectUri() })
+    c.json({
+      firebase: firebaseConfigured(),
+      projectId: process.env.FIREBASE_PROJECT_ID || '',
+      apiKey: process.env.FIREBASE_WEB_API_KEY || '',
+    })
   );
 
-  app.get('/auth/google', c => {
-    if (!googleAuthConfigured()) {
+  /**
+   * Exchanges a Firebase ID token for a session cookie.
+   *
+   * Done once at sign-in rather than sending the Firebase token on every
+   * request: those expire hourly and would need refreshing on every call, they
+   * cannot be revoked server-side without the admin SDK, and a cookie works for
+   * SSE and blob URLs where attaching a header is awkward.
+   */
+  app.post('/auth/firebase', async c => {
+    if (!firebaseConfigured()) {
+      return c.json({ error: 'Sign-in is not configured on this server.', reason: 'unconfigured' }, 503);
+    }
+
+    const { idToken } = await c.req.json().catch(() => ({}));
+    if (!idToken) return c.json({ error: 'idToken is required', reason: 'invalid' }, 400);
+
+    const identity = await verifyFirebaseToken(idToken);
+    if (!identity) {
+      return c.json({ error: 'That sign-in could not be verified.', reason: 'invalid' }, 401);
+    }
+
+    // Anyone can register any address with a password, so an unverified one
+    // proves nothing — and an unverified address matching an allowlisted domain
+    // would otherwise walk straight into that domain's org.
+    if (!identity.emailVerified) {
       return c.json(
-        { error: 'Google sign-in is not configured. Set GOOGLE_OAUTH_CLIENT_ID and _SECRET.' },
-        503
+        {
+          error: 'Confirm your email address first — check your inbox for the link.',
+          reason: 'unverified',
+        },
+        403
       );
     }
-    // The state parameter, echoed back by Google and compared on return. Without
-    // it, an attacker can complete a sign-in flow they started in a victim's
-    // browser and leave them logged in as someone else.
-    const state = randomToken();
-    setCookie(c, STATE_COOKIE, state, 600);
-    return c.redirect(authorizationUrl(state));
-  });
 
-  app.get('/auth/callback', async c => {
-    const code = c.req.query('code');
-    const state = c.req.query('state');
-    const expected = cookie(c.req.raw.headers, STATE_COOKIE);
-    clearCookie(c, STATE_COOKIE);
-
-    if (c.req.query('error')) return c.redirect('/?auth=denied');
-    if (!code || !state || !expected || state !== expected) return c.redirect('/?auth=state');
-
-    const identity = await exchangeCode(code);
-    if (!identity) return c.redirect('/?auth=failed');
-
-    if (!domainAllowed(identity.email, identity.hostedDomain)) {
-      return c.redirect('/?auth=domain');
+    if (!domainAllowed(identity.email)) {
+      return c.json(
+        { error: 'That address is not permitted to sign in here.', reason: 'domain' },
+        403
+      );
     }
 
-    const { token } = await signIn(identity, c.req.header('user-agent'));
+    const { token, user } = await signIn(identity, c.req.header('user-agent'));
     setCookie(c, SESSION_COOKIE, token, 60 * 60 * 24 * Number(process.env.SESSION_DAYS || 30));
-    return c.redirect('/');
+    return c.json({ email: user.email, name: user.name });
   });
 
   app.post('/auth/signout', async c => {
     await signOut(cookie(c.req.raw.headers, SESSION_COOKIE));
-    clearCookie(c, SESSION_COOKIE);
+    setCookie(c, SESSION_COOKIE, '', 0);
     return c.json({ ok: true });
   });
 

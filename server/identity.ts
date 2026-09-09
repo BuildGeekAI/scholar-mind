@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { KeyScope, verifyKey } from './apiKeys';
-import { SESSION_COOKIE, verifySession } from './googleAuth';
+import { SESSION_COOKIE, verifySession } from './session';
 
 export interface User {
   id: string;
@@ -126,9 +126,9 @@ export const resolveUser = async (headers: Headers): Promise<User | null> => {
   // integration appeared to work locally and failed only in production.
   if (outcome.status === 'invalid') return null;
 
-  // A browser session from Google sign-in. Checked before IAP and before the
-  // dev fallback, so signing in locally behaves exactly as it does deployed —
-  // the alternative is an auth path that only ever runs in production.
+  // A browser session. Checked before IAP and before the dev fallback, so
+  // signing in locally behaves exactly as it does deployed — the alternative is
+  // an auth path that only ever runs in production.
   const session = await verifySession(cookie(headers, SESSION_COOKIE));
   if (session) {
     return {
@@ -139,8 +139,8 @@ export const resolveUser = async (headers: Headers): Promise<User | null> => {
     };
   }
 
-  // No session, and Google sign-in is the way in. The dev fallback stays for
-  // local work with sign-in unconfigured; it is unreachable in production.
+  // No session. The dev fallback stays for local work with sign-in
+  // unconfigured; it is unreachable in production.
   if (!isProduction) return DEV_USER;
 
   const assertion = headers.get(IAP_JWT_HEADER);

@@ -1,19 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { domainAllowed, isConfigured, redirectUri } from '../server/googleAuth';
+import { domainAllowed, isConfigured } from '../server/session';
 
 /**
  * The parts of sign-in that decide things, isolated from the network.
  *
- * `domainAllowed` is the one that matters: it is the gate between "anyone with
- * a Google account" and "people from your organisation", and profiles default
- * to org-visible, so getting it wrong means a stranger reading someone's
- * library rather than merely seeing a login screen.
+ * `domainAllowed` is the one that matters, and it matters more since sign-in
+ * moved to email and password: it is now the only gate between "anyone who can
+ * receive email" and "people from your organisation". Profiles default to
+ * org-visible, so getting it wrong means a stranger reading someone's library
+ * rather than merely seeing a login screen.
  */
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe('domainAllowed', () => {
-  it('permits any account when no allowlist is configured', () => {
+  it('permits any address when no allowlist is configured', () => {
     vi.stubEnv('AUTH_ALLOWED_DOMAINS', '');
     expect(domainAllowed('anyone@gmail.com')).toBe(true);
     expect(domainAllowed('someone@example.org')).toBe(true);
@@ -67,34 +68,34 @@ describe('domainAllowed', () => {
 });
 
 describe('isConfigured', () => {
-  it('is false until both halves of the OAuth client are set', () => {
-    vi.stubEnv('GOOGLE_OAUTH_CLIENT_ID', '');
-    vi.stubEnv('GOOGLE_OAUTH_CLIENT_SECRET', '');
+  it('is false until an identity provider is configured', () => {
+    vi.stubEnv('FIREBASE_PROJECT_ID', '');
     expect(isConfigured()).toBe(false);
-
-    vi.stubEnv('GOOGLE_OAUTH_CLIENT_ID', 'id');
-    expect(isConfigured()).toBe(false);
-
-    vi.stubEnv('GOOGLE_OAUTH_CLIENT_SECRET', 'secret');
+    vi.stubEnv('FIREBASE_PROJECT_ID', 'scholar-mind-dev');
     expect(isConfigured()).toBe(true);
   });
 });
 
-describe('redirectUri', () => {
-  it('is built from the origin the browser actually uses', () => {
-    vi.stubEnv('PUBLIC_ORIGIN', 'https://scholarmind.example');
-    expect(redirectUri()).toBe('https://scholarmind.example/api/auth/callback');
+/**
+ * The `*` escape hatch. It exists so a deployment can say "open registration is
+ * deliberate" and satisfy the startup guard — if it did not actually open the
+ * gate, the guard would be a trap that no value could pass.
+ */
+describe('open registration', () => {
+  it('"*" allows any address', () => {
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', '*');
+    expect(domainAllowed('anyone@anywhere.example')).toBe(true);
   });
 
-  it('tolerates a trailing slash rather than producing a double one', () => {
-    // A double slash would not match the URI registered on the OAuth client,
-    // and Google rejects the flow with an error that names nothing useful.
-    vi.stubEnv('PUBLIC_ORIGIN', 'https://scholarmind.example/');
-    expect(redirectUri()).toBe('https://scholarmind.example/api/auth/callback');
+  it('"*" alongside domains still allows everything', () => {
+    // Ambiguous input, resolved the permissive way on purpose: someone who
+    // wrote '*' meant it, and silently ignoring it would be worse.
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', 'example.com,*');
+    expect(domainAllowed('someone@elsewhere.example')).toBe(true);
   });
 
-  it('falls back to the local dev origin', () => {
-    vi.stubEnv('PUBLIC_ORIGIN', '');
-    expect(redirectUri()).toBe('http://localhost:3000/api/auth/callback');
+  it('does not treat "*" as a literal domain', () => {
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', 'example.com');
+    expect(domainAllowed('someone@*')).toBe(false);
   });
 });

@@ -410,22 +410,22 @@ describe.skipIf(!url)('multi-tenant access control, against Postgres', () => {
   });
 
   describe('sessions', () => {
-    let auth: typeof import('../../server/googleAuth');
+    let auth: typeof import('../../server/session');
     let identity: typeof import('../../server/identity');
 
     beforeAll(async () => {
-      auth = await import('../../server/googleAuth');
+      auth = await import('../../server/session');
       identity = await import('../../server/identity');
     });
 
     const withCookie = (token: string) => new Headers({ cookie: `sm_session=${token}` });
 
     const google = (subject: string, email: string) => ({
+      provider: 'firebase',
       subject,
       email,
       name: 'Signed In',
       picture: undefined,
-      hostedDomain: undefined,
     });
 
     it('creates the person on first sign-in and resolves them afterwards', async () => {
@@ -436,7 +436,7 @@ describe.skipIf(!url)('multi-tenant access control, against Postgres', () => {
       expect(resolved?.viaKey).toBeFalsy();
     });
 
-    it('keys the person on Google’s subject, so a changed address is the same person', async () => {
+    it('keys the person on the provider subject, so a changed address is the same person', async () => {
       const first = await auth.signIn(google('22222', 'before@example.com'));
       const second = await auth.signIn(google('22222', 'after@example.com'));
       expect(second.user.userId).toBe(first.user.userId);

@@ -372,19 +372,25 @@ export interface Me {
 export const me = (): Promise<Me> => send('/auth/me', 'GET');
 
 export interface AuthConfig {
-  google: boolean;
-  redirectUri: string;
+  firebase: boolean;
+  projectId: string;
+  /** Public by design: it identifies the project and authorises nothing. */
+  apiKey: string;
 }
 
 export const authConfig = (): Promise<AuthConfig> => send('/auth/config', 'GET');
 
-/** A full-page navigation, not fetch: the OAuth flow is a browser redirect. */
-export const signInWithGoogle = (): void => {
-  window.location.href = '/api/auth/google';
-};
+/**
+ * Trades a Firebase ID token for a session cookie. Everything after this is an
+ * ordinary cookie request — no Authorization header, no token refresh.
+ */
+export const exchangeFirebaseToken = (idToken: string): Promise<{ email: string; name?: string }> =>
+  send('/auth/firebase', 'POST', { idToken });
 
 export const signOut = async (): Promise<void> => {
-  await send('/auth/signout', 'POST');
+  await send('/auth/signout', 'POST').catch(() => {
+    // Already signed out, or the session expired. Either way, leave.
+  });
   window.location.href = '/';
 };
 

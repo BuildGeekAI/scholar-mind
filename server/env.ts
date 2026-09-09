@@ -42,6 +42,25 @@ if (onCloudRun && process.env.NODE_ENV !== 'production') {
   );
 }
 
+/**
+ * Sign-in moved to email and password, so an unset allowlist no longer means
+ * "anyone with a Google account" — it means anyone who can receive email. New
+ * users land in the demo org, where profiles default to org-visible, so an open
+ * allowlist is a data exposure rather than a lax door policy.
+ *
+ * Fail closed and loudly, for the same reason as the NODE_ENV guard above: a
+ * crashed revision is a far better outcome than a serving one that anybody can
+ * sign into. Set AUTH_ALLOWED_DOMAINS to a domain list, or to `*` to say
+ * deliberately that open registration is what you want.
+ */
+if (onCloudRun && !process.env.AUTH_ALLOWED_DOMAINS) {
+  throw new Error(
+    'Refusing to start: AUTH_ALLOWED_DOMAINS is not set, so anyone who can ' +
+    'receive email could register and read every org-visible library. Set it to ' +
+    'a comma-separated domain list, or to "*" to allow open registration on purpose.'
+  );
+}
+
 // These two are recoverable, and IAP_AUDIENCE is deliberately set *after* the
 // first deploy, so they warn rather than abort.
 if (onCloudRun && !process.env.IAP_AUDIENCE) {
