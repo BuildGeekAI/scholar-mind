@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { extractText, extractJson } from '../server/gemini';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { extractText, extractJson, scholarPaperLimit } from '../server/gemini';
 
 /**
  * Interactions responses have no `.text` — output lives in a `model_output`
@@ -102,5 +102,54 @@ describe('extractJson', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(extractJson(wrap('{"blogContent":"half a sen'), null)).toBeNull();
     spy.mockRestore();
+  });
+});
+
+/**
+ * How many publications one scholar search asks for.
+ *
+ * A single grounded generation degrades rather than fails when asked for too
+ * much — invented years, merged titles toward the tail — so the ceiling is
+ * enforced rather than left to whoever passes the parameter.
+ */
+describe('scholarPaperLimit', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('defaults to twenty', () => {
+    vi.stubEnv('SCHOLAR_PAPER_LIMIT', '');
+    expect(scholarPaperLimit()).toBe(20);
+  });
+
+  it('takes the environment default when nothing is requested', () => {
+    vi.stubEnv('SCHOLAR_PAPER_LIMIT', '35');
+    expect(scholarPaperLimit()).toBe(35);
+  });
+
+  it('lets a request override the default', () => {
+    vi.stubEnv('SCHOLAR_PAPER_LIMIT', '20');
+    expect(scholarPaperLimit(8)).toBe(8);
+  });
+
+  it('caps at fifty, past which the answer stops being trustworthy', () => {
+    expect(scholarPaperLimit(500)).toBe(50);
+    vi.stubEnv('SCHOLAR_PAPER_LIMIT', '9999');
+    expect(scholarPaperLimit()).toBe(50);
+  });
+
+  it('never returns less than one, whatever it is handed', () => {
+    for (const bad of [0, -5, NaN, undefined]) {
+      expect(scholarPaperLimit(bad as number)).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('floors a fractional request rather than passing it to the prompt', () => {
+    expect(scholarPaperLimit(12.7)).toBe(12);
+  });
+
+  it('is read at call time, so it can change without a restart', () => {
+    vi.stubEnv('SCHOLAR_PAPER_LIMIT', '15');
+    expect(scholarPaperLimit()).toBe(15);
+    vi.stubEnv('SCHOLAR_PAPER_LIMIT', '25');
+    expect(scholarPaperLimit()).toBe(25);
   });
 });

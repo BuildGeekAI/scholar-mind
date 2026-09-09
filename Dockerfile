@@ -26,4 +26,8 @@ RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
 USER app
 
 EXPOSE 8080
+
+# The API server. The queue worker runs from this same image with its command
+# overridden (`npx tsx server/worker.ts`) — one image, two services, so the
+# worker can never drift from the pipeline code the API enqueues against.
 CMD ["npx", "tsx", "server/index.ts"]

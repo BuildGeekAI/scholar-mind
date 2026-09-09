@@ -9,6 +9,27 @@ export const MODELS = {
   embedding: 'gemini-embedding-2',
 } as const;
 
+/**
+ * The model for calls that attach **no tools**.
+ *
+ * Grounding — `google_search`, `url_context`, `file_search` — is a Gemini
+ * feature. Anything that depends on it must stay on `MODELS.text`: a scholar
+ * search without grounding does not fail, it invents a plausible publication
+ * list, which is the precise failure the citation rules here exist to prevent.
+ *
+ * A growing share of calls need no tools at all, because retrieval moved to
+ * Postgres and the passages arrive in the prompt: advisor answers, panel
+ * synthesis, cross-library chat and the structuring pass. Those are free to run
+ * on something cheaper or open-weights.
+ *
+ *   PLAIN_TEXT_MODEL=gemma-3-27b-it
+ *
+ * Verify a candidate before trusting it — `npm run spike:models` reports which
+ * models exist and, more importantly, which silently ignore an attached tool
+ * rather than refusing it.
+ */
+export const plainModel = (): string => process.env.PLAIN_TEXT_MODEL || MODELS.text;
+
 let _ai: GoogleGenAI | undefined;
 export const ai = (): GoogleGenAI => {
   if (!_ai) {
@@ -208,19 +229,49 @@ const toPaper = (raw: any, id: string): Paper => ({
 });
 
 // --- Discovery (google_search) ---------------------------------------------
+/**
+ * How many publications one search asks for.
+ *
+ * This is a single grounded generation: the model searches, reads and writes
+ * every paper's metadata in one response. Asking for more than it can do well
+ * does not fail — it degrades, returning invented years and merged titles toward
+ * the tail, which is exactly the kind of confident wrongness the citation rules
+ * in this codebase exist to prevent.
+ *
+ * Twenty is comfortably within that. Beyond about fifty the answer stops being
+ * trustworthy regardless of what is asked, so the ceiling is enforced rather
+ * than advisory. Getting a prolific researcher's *whole* output needs
+ * pagination — several calls accumulating into one library — not a bigger number
+ * here.
+ *
+ * Read at call time, so it can be changed without a restart.
+ */
+export const scholarPaperLimit = (requested?: number): number => {
+  const fallback = Number(process.env.SCHOLAR_PAPER_LIMIT || 20);
+  const wanted = Number.isFinite(requested) && requested! > 0 ? requested! : fallback;
+  return Math.min(Math.max(Math.floor(wanted), 1), 50);
+};
+
 export const searchScholarAndPapers = async (
-  scholarName: string
+  scholarName: string,
+  paperLimit?: number
 ): Promise<{ name: string; affiliation: string; topics: string[]; papers: Paper[] }> => {
   const isUrl = /http|www\.|scholar\.google/i.test(scholarName);
+  const limit = scholarPaperLimit(paperLimit);
   const input = isUrl
     ? `Use Google Search to open and analyse this scholar profile URL: "${scholarName}".
        Return the scholar's full personal name exactly as it appears on the profile — a
        person's name, never a URL, username, or ID. Also return their affiliation, research
-       topics, and their 5-10 most significant publications with title, year, authors,
-       citation count, and a short summary.`
+       topics, and up to ${limit} of their most significant publications with title, year,
+       authors, citation count, and a short summary. Prefer their most cited and most
+       representative work. Only include publications you can actually verify; returning
+       fewer accurate entries is better than padding the list.`
     : `Search for the scholar "${scholarName}". Return their full name as normally written,
-       their affiliation, research topics, and their top papers with title, year, authors,
-       approximate citation count, and a two-sentence summary each.`;
+       their affiliation, research topics, and up to ${limit} of their most significant
+       papers with title, year, authors, approximate citation count, and a two-sentence
+       summary each. Prefer their most cited and most representative work. Only include
+       publications you can actually verify; returning fewer accurate entries is better
+       than padding the list.`;
 
   // Re-throws by design: the workspace surfaces this failure to the user.
   const interaction = await ask({ input, schema: SCHOLAR_SCHEMA, tools: [googleSearchTool()] });
@@ -230,7 +281,9 @@ export const searchScholarAndPapers = async (
     name: data.name || (isUrl ? '' : scholarName),
     affiliation: data.affiliation || 'Unknown Affiliation',
     topics: data.topics || [],
-    papers: (data.papers || []).map((p: any, i: number) => toPaper(p, `paper-${i}-${Date.now()}`)),
+    papers: (data.papers || [])
+      .slice(0, limit)
+      .map((p: any, i: number) => toPaper(p, `paper-${i}-${Date.now()}`)),
   };
 };
 

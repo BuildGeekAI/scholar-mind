@@ -5,6 +5,7 @@ import { deleteDocument, indexDocument } from './fileSearch';
 import { fetchPdf, resolvePaperSource } from './paperSource';
 import * as corpus from './corpus';
 import { indexableText } from './sources';
+import { indexPaper } from './indexer';
 import * as repo from './repository';
 
 export type ProgressFn = (paper: Paper) => void | Promise<void>;
@@ -131,11 +132,45 @@ const runIndex = async (
   // Only papers have a PDF to hunt for. Every other source arrived with its
   // content already extracted, so indexing is the only step left.
   const isPaper = (paper.kind ?? 'paper') === 'paper';
+
+  /**
+   * Acquisition failing must not stop the paper being indexed. Resolution
+   * reaches the model and three external services, any of which can be down,
+   * rate-limited or simply wrong about a paper — and the fallback, indexing the
+   * prose we already hold, is exactly what happens for the many papers that have
+   * no open-access PDF at all.
+   */
   const { patch, bytes } = isPaper
-    ? await acquirePdf(profileId, paper, blobs, setStage)
+    ? await acquirePdf(profileId, paper, blobs, setStage).catch(e => {
+        console.error(`Could not acquire a PDF for ${paper.title}:`, e);
+        return { patch: { pdfStatus: 'error' } as Partial<Paper>, bytes: null };
+      })
     : { patch: {} as Partial<Paper>, bytes: null };
 
   await setStage('indexing');
+
+  /**
+   * Two indexes, written independently, because they answer different questions
+   * and fail for different reasons.
+   *
+   * Postgres is the index of record for search: it is the only one that can be
+   * scoped to what a caller may see, so cross-library search reads it. File
+   * Search grounds single-profile chat and supplies its citations.
+   *
+   * Postgres goes first and neither gates the other. A rejected API key must not
+   * be able to empty the search index — that would make ACL-scoped search depend
+   * on the very service whose limitations it exists to work around.
+   *
+   * Known gap: this indexes the paper's prose, not its PDF full text. There is
+   * no PDF text extraction in this codebase, so a paper whose full text went to
+   * File Search as bytes is represented here by its summary and write-up. That
+   * difference is what to measure before retiring File Search.
+   */
+  const indexed = await indexPaper(profileId, paper, bytes ? 'pdf' : 'summary').catch(e => {
+    console.error(`Search indexing failed for ${paper.title}:`, e);
+    return null;
+  });
+
   const metadata = {
     paperId: paper.id,
     title: paper.title,
@@ -143,21 +178,26 @@ const runIndex = async (
     authors: (paper.authors ?? []).join(', '),
   };
 
-  const docName = bytes
-    ? await indexDocument(storeName, bytes, 'application/pdf', paper.title, metadata)
-    : await indexDocument(
-        storeName,
-        Buffer.from(isPaper ? summaryDocument(paper) : indexableText(paper), 'utf8'),
-        'text/plain',
-        paper.title,
-        { ...metadata, kind: isPaper ? 'generated-summary' : (paper.kind ?? 'source') }
-      );
+  // Absent when the profile has no store and none could be created. Chat loses
+  // its grounding for this paper; search does not.
+  const docName = !storeName
+    ? undefined
+    : bytes
+      ? await indexDocument(storeName, bytes, 'application/pdf', paper.title, metadata)
+      : await indexDocument(
+          storeName,
+          Buffer.from(isPaper ? summaryDocument(paper) : indexableText(paper), 'utf8'),
+          'text/plain',
+          paper.title,
+          { ...metadata, kind: isPaper ? 'generated-summary' : (paper.kind ?? 'source') }
+        );
 
-  if (!docName) return { ...patch, indexStatus: 'error' };
+  // Only a paper that reached neither index has actually failed to index.
+  if (!docName && !indexed) return { ...patch, indexStatus: 'error' };
 
   // Re-indexing replaces the previous document rather than accumulating
   // duplicates, so a summary-indexed paper upgrades cleanly to its full text.
-  if (paper.fileSearchDocName && paper.fileSearchDocName !== docName) {
+  if (docName && paper.fileSearchDocName && paper.fileSearchDocName !== docName) {
     await deleteDocument(paper.fileSearchDocName);
   }
 
@@ -245,7 +285,7 @@ export const processPaper = async (
       await onProgress?.(current);
     } catch {
       // The client may have navigated away mid-run. Progress reporting is
-      // best-effort: processing continues and Firestore stays authoritative.
+      // best-effort: processing continues and the database stays authoritative.
     }
   };
 
@@ -258,7 +298,9 @@ export const processPaper = async (
     await save();
 
     if (wantsIndex) {
-      if (!storeName) throw new Error('This profile has no File Search store.');
+      // A missing File Search store is no longer fatal: the paper still reaches
+      // the search index, it only loses chat grounding.
+
       // The patch is bound before the assignment: spreading `current` inline
       // would snapshot it ahead of the await and undo every setStage in between.
       const patch = await runIndex(profileId, current, blobs, storeName, setStage);
@@ -274,7 +316,7 @@ export const processPaper = async (
 
       // A paper indexed from its abstract alone gets re-indexed against the
       // write-up, which is far richer than the metadata it was holding.
-      if (mode === 'both' && storeName && current.indexedKind === 'summary' && current.blogContent) {
+      if (mode === 'both' && current.indexedKind === 'summary' && current.blogContent) {
         await setStage('indexing');
         const reindexed = await runIndex(profileId, current, blobs, storeName, setStage);
         current = { ...current, ...reindexed };

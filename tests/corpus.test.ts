@@ -37,7 +37,7 @@ describe('canonicalKey', () => {
     expect(key(`${prefix} part one`)).not.toBe(key(`${prefix} part two`));
   });
 
-  it('produces a key usable as a Firestore document id and a blob path', () => {
+  it('produces a key usable as a primary key and a blob path', () => {
     const k = key('Attention Is All You Need: A Study/Review (2017)');
     expect(k).toMatch(/^[a-z0-9-]+$/);
     expect(k).not.toContain('/');

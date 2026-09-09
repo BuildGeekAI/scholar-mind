@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2, Link2, Upload, Sun, Moon } from 'lucide-react';
+import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2, Link2, Upload, Sun, Moon, UserRoundCog } from 'lucide-react';
 import { Citation, Paper, Message, ScholarData, AppState } from '../types';
 import { Theme } from './theme';
 import * as api from '../services/api';
+import AdvisorSettings from './AdvisorSettings';
 import PaperList from './PaperList';
 import BlogReader from './BlogReader';
 import CiteDialog from './CiteDialog';
@@ -41,12 +42,24 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isChatOpen, setIsChatOpen] = useState(true);
+  const [showAdvisorSettings, setShowAdvisorSettings] = useState(false);
 
   // Selection State
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(new Set());
 
   // The current batch: which papers, and which half of the pipeline is running.
   const [batch, setBatch] = useState<{ ids: string[]; mode: api.PipelineMode } | null>(null);
+
+  // The run the server is executing on our behalf, and how far it has got.
+  // Processing outlives this component now, so this is polled rather than
+  // streamed — closing the tab no longer cancels anything.
+  const [run, setRun] = useState<api.Run | null>(null);
+  const [runProgress, setRunProgress] = useState<api.RunProgress | null>(null);
+
+  // A crawl can only discover the second kind of duplicate after the model has
+  // resolved the scholar's real name, which happens inside the job. The run
+  // reports it; this carries it out of the poller and into the prompt below.
+  const [pendingDuplicate, setPendingDuplicate] = useState<api.DuplicateProfile | null>(null);
 
   // Load everything for this profile from the server.
   useEffect(() => {
@@ -108,9 +121,32 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     []
   );
 
-  const isAnyProcessing = useMemo(() => papers.some(isBusy), [papers, isBusy]);
+  /**
+   * A run that is queued but not yet claimed shows nothing on any paper, so the
+   * run itself has to count as busy — otherwise the UI looks idle for the
+   * second or two before a worker picks the job up.
+   */
+  const isAnyProcessing = useMemo(
+    () => papers.some(isBusy) || (!!run && !api.isRunFinished(run)),
+    [papers, isBusy, run]
+  );
 
   const batchProgress = useMemo(() => {
+    const label = batch?.mode === 'index' ? 'Indexing' : run?.kind === 'crawl' ? 'Crawling' : 'Processing';
+
+    // The queue counts settled jobs directly, which is both cheaper and more
+    // accurate than inferring completion from paper fields — a job that
+    // dead-lettered is done, even though its paper never reached 'converted'.
+    if (runProgress?.total) {
+      const done = runProgress.succeeded + runProgress.failed;
+      return {
+        done,
+        total: runProgress.total,
+        percent: (done / runProgress.total) * 100,
+        label,
+      };
+    }
+
     if (!batch?.ids.length) return null;
     const inBatch = papers.filter(p => batch.ids.includes(p.id));
     const settled = inBatch.filter(p => !isBusy(p)).length;
@@ -118,25 +154,62 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
       done: settled,
       total: batch.ids.length,
       percent: (settled / batch.ids.length) * 100,
-      label: batch.mode === 'index' ? 'Indexing' : 'Processing',
+      label,
     };
-  }, [papers, batch, isBusy]);
+  }, [papers, batch, isBusy, run, runProgress]);
 
   /**
-   * A run keeps going server-side even when the SSE stream does not — a reload,
-   * a navigation, a dropped connection. Firestore stays authoritative, so while
-   * anything is in flight the list is refreshed from it rather than left frozen
-   * on whatever the last delivered event happened to say.
+   * Polls whatever run is outstanding.
+   *
+   * The work is a queued job on the server, so it survives a reload, a
+   * navigation and a dropped connection — and equally, it keeps going when this
+   * component is not watching. Picking the run up again on mount is therefore
+   * the normal case, not an error path.
    */
   useEffect(() => {
-    if (!profile || !isAnyProcessing) return;
-    const handle = setInterval(() => {
-      api.listPapers(profile.id).then(setPapers).catch(() => {
+    if (!profile) return;
+    let cancelled = false;
+    let handle: ReturnType<typeof setTimeout>;
+
+    const tick = async () => {
+      try {
+        const status = await api.profileStatus(profile.id);
+        if (cancelled) return;
+        setRun(status.run);
+        setRunProgress(status.progress);
+
+        // The status response carries per-paper state; the papers themselves
+        // carry the content. Refresh both while anything is moving.
+        if (status.run && !api.isRunFinished(status.run)) {
+          const fresh = await api.listPapers(profile.id);
+          if (!cancelled) setPapers(fresh);
+        } else if (status.run && api.isRunFinished(status.run)) {
+          const fresh = await api.listPapers(profile.id);
+          if (!cancelled) setPapers(fresh);
+          if (!cancelled) setBatch(null);
+
+          // A crawl that stopped because the scholar is already in a library
+          // reports itself here: the check needs the resolved name, which only
+          // exists after the model call, so it cannot be answered by the
+          // request that started it.
+          const duplicate = status.run.detail?.duplicate;
+          if (duplicate && status.run.status === 'cancelled') {
+            setPendingDuplicate(duplicate);
+          }
+          return; // Settled: stop polling until something else is started.
+        }
+      } catch {
         // Transient failure: the next tick tries again.
-      });
-    }, 4000);
-    return () => clearInterval(handle);
-  }, [profile, isAnyProcessing]);
+      }
+      if (!cancelled) handle = setTimeout(tick, 2000);
+    };
+
+    void tick();
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [profile?.id, run?.id]);
 
   const mergePaper = useCallback((incoming: Paper) => {
     setPapers(prev => {
@@ -170,18 +243,20 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
 
   const runSearch = async (query: string, allowDuplicate: boolean) => {
     if (!profile) return;
-    const { profile: updated, papers: found } = await api.searchScholar(
-      profile.id,
-      query,
-      allowDuplicate
-    );
+    const { runId, profile: updated } = await api.searchScholar(profile.id, query, allowDuplicate);
     setProfile(updated);
     if (updated.title && !looksLikeUrl(updated.title)) {
       setTitle(updated.title);
       savedRef.current = { title: updated.title };
     }
-    setPapers(found);
-    setSelectedPaperIds(new Set(found.map(p => p.id)));
+
+    // The papers do not exist yet — the crawl has only just been queued. The
+    // poller fills them in as the worker finds and indexes them.
+    if (runId) {
+      const { run: started, progress } = await api.getRun(runId);
+      setRun(started);
+      setRunProgress(progress);
+    }
     setAppState(AppState.READY);
   };
 
@@ -212,6 +287,17 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     }
     onOpenProfile(duplicate.id);
   };
+
+  // The 409 path and the run-reported path converge on the same prompt.
+  useEffect(() => {
+    if (!pendingDuplicate) return;
+    const duplicate = pendingDuplicate;
+    setPendingDuplicate(null);
+    setAppState(AppState.IDLE);
+    handleDuplicate(duplicate).catch(error => {
+      alert(error?.message || 'Failed to find scholar info. Please try again.');
+    });
+  }, [pendingDuplicate]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -256,19 +342,33 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
     }
   };
 
-  /** The server owns the pipeline; this only streams progress back into state. */
+  /**
+   * Enqueues the pipeline and hands over to the poller. Nothing is awaited to
+   * completion here: a sixty-paper crawl takes minutes, and the user is free to
+   * navigate away, reload or close the tab while it runs.
+   */
   const runPipeline = useCallback(async (ids: string[], mode: api.PipelineMode) => {
     if (!profile || !ids.length) return;
     setBatch({ ids, mode });
     try {
-      await api.processPapers(profile.id, ids, mode, mergePaper, undefined, message => alert(message));
+      const { runId, alreadyRunning } = await api.processPapers(profile.id, ids, mode);
+      if (!runId) {
+        setBatch(null);
+        return;
+      }
+      if (alreadyRunning) {
+        // Asking twice is idempotent; join the run already doing the work.
+        console.info('Those papers are already being processed; watching that run.');
+      }
+      const { run: started, progress } = await api.getRun(runId);
+      setRun(started);
+      setRunProgress(progress);
     } catch (error: any) {
       console.error(error);
       alert(error.message || 'Processing failed.');
-    } finally {
       setBatch(null);
     }
-  }, [profile, mergePaper]);
+  }, [profile]);
 
   const handleToggleSelect = (id: string) => {
     setSelectedPaperIds(prev => {
@@ -484,6 +584,20 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
             </div>
 
             <div className="flex items-center gap-2 ml-4">
+              {/* Turn this library into a consultable advisor */}
+              <button
+                onClick={() => setShowAdvisorSettings(v => !v)}
+                aria-pressed={showAdvisorSettings}
+                className={`p-2 rounded-lg transition-colors ${
+                  profile.advisorEnabled
+                    ? 'text-scholarly-600 hover:bg-panel-2'
+                    : 'text-subtle hover:bg-panel-2 hover:text-ink'
+                }`}
+                title={profile.advisorEnabled ? 'Advisor settings' : 'Make this an advisor'}
+              >
+                <UserRoundCog className="w-5 h-5" />
+              </button>
+
               {/* Clear Session Button */}
               {(scholar || chatMessages.length > 0) && (
                 <button
@@ -515,6 +629,18 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
               </button>
             </div>
           </div>
+
+          {showAdvisorSettings && (
+            <div className="mb-4">
+              <AdvisorSettings
+                profile={profile}
+                onSaved={updated => {
+                  setProfile(updated);
+                  setShowAdvisorSettings(false);
+                }}
+              />
+            </div>
+          )}
 
           {/* Toggle for Data Addition */}
           <div className="flex bg-panel-2/50 p-1 rounded-xl mb-4 w-fit border border-line/20">

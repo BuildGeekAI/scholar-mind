@@ -30,6 +30,7 @@ describe('startup guard', () => {
   it('starts on Cloud Run when NODE_ENV is production', async () => {
     vi.stubEnv('K_SERVICE', 'scholarmind');
     vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', 'example.com');
     vi.stubEnv('IAP_AUDIENCE', '/projects/1/global/backendServices/2');
     vi.stubEnv('GCS_BUCKET', 'bucket');
     await expect(loadEnvModule()).resolves.toBeDefined();
@@ -48,6 +49,7 @@ describe('startup guard', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubEnv('K_SERVICE', 'scholarmind');
     vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', 'example.com');
     vi.stubEnv('IAP_AUDIENCE', '');
     vi.stubEnv('GCS_BUCKET', 'bucket');
     await expect(loadEnvModule()).resolves.toBeDefined();
@@ -59,11 +61,60 @@ describe('startup guard', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubEnv('K_SERVICE', 'scholarmind');
     vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', 'example.com');
     vi.stubEnv('IAP_AUDIENCE', '/projects/1/global/backendServices/2');
     vi.stubEnv('GCS_BUCKET', '');
     await expect(loadEnvModule()).resolves.toBeDefined();
     expect(warn.mock.calls.flat().join(' ')).toMatch(/GCS_BUCKET/);
     warn.mockRestore();
+  });
+});
+
+/**
+ * The second fail-closed guard, added when sign-in moved to email and password.
+ *
+ * Before, an unset allowlist meant "anyone with a Google account" — loose. Now
+ * it means anyone who can receive email, and new users land in the demo org
+ * where profiles default to org-visible. So an omission is a data exposure, and
+ * the same reasoning applies as to NODE_ENV: a crashed revision beats a serving
+ * one that anybody can sign into.
+ */
+describe('open-registration guard', () => {
+  it('refuses to start on Cloud Run with no allowlist', async () => {
+    vi.stubEnv('K_SERVICE', 'scholarmind');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', '');
+    await expect(loadEnvModule()).rejects.toThrow(/AUTH_ALLOWED_DOMAINS/);
+  });
+
+  it('says what the omission would actually allow', async () => {
+    // The message has to be actionable in a log at 3am, not just correct.
+    vi.stubEnv('K_SERVICE', 'scholarmind');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', '');
+    await expect(loadEnvModule()).rejects.toThrow(/anyone who can receive email/);
+  });
+
+  it('starts with a domain list', async () => {
+    vi.stubEnv('K_SERVICE', 'scholarmind');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', 'example.com,example.org');
+    await expect(loadEnvModule()).resolves.toBeDefined();
+  });
+
+  it('starts with "*", which is how a deployment says open on purpose', async () => {
+    // The distinction the guard exists to draw: deliberate versus forgotten.
+    vi.stubEnv('K_SERVICE', 'scholarmind');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', '*');
+    await expect(loadEnvModule()).resolves.toBeDefined();
+  });
+
+  it('does not apply off Cloud Run, where the dev fallback governs', async () => {
+    vi.stubEnv('K_SERVICE', '');
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AUTH_ALLOWED_DOMAINS', '');
+    await expect(loadEnvModule()).resolves.toBeDefined();
   });
 });
 

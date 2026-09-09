@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { Plus, Trash2, Search, X, Download, Sun, Moon } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Plus, Trash2, Search, X, Download, Sun, Moon, LogOut } from 'lucide-react';
 import { Theme } from './theme';
 import * as api from '../services/api';
-import LandingSearch from './LandingSearch';
+import AskPanel from './AskPanel';
+import Footer from './Footer';
 
 interface DashboardProps {
   profiles: api.ProfileRecord[];
@@ -11,12 +12,32 @@ interface DashboardProps {
   /** Creates a profile and immediately searches it for the given scholar. */
   onCreateFor: (query: string) => Promise<void>;
   onCreateProfile: () => void;
+  me: api.Me | null;
   onSelectProfile: (id: string) => void;
   onDeleteProfile: (id: string, e: React.MouseEvent) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, onCreateFor, onCreateProfile, onSelectProfile, onDeleteProfile }) => {
+const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, onCreateFor, onCreateProfile, me, onSelectProfile, onDeleteProfile }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [subject, setSubject] = useState<string | null>(null);
+
+  /**
+   * Subjects come from the topics a scholar search already resolved, so there is
+   * nothing to tag by hand. Ordered by how many libraries carry each, because a
+   * subject appearing once is a worse filter than one appearing five times.
+   */
+  const subjects = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const profile of profiles) {
+      for (const topic of profile.topics ?? []) {
+        const key = topic.trim();
+        if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 12);
+  }, [profiles]);
   
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString('en-US', {
@@ -27,10 +48,11 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
   };
 
   const filteredProfiles = profiles
-    .filter(p => 
-      p.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    .filter(p =>
+      p.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (p.scholarName || '').toLowerCase().includes(searchTerm.toLowerCase())
     )
+    .filter(p => !subject || (p.topics ?? []).some(t => t.trim() === subject))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
   return (
@@ -39,11 +61,14 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
         
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
-           <div className="flex items-center gap-4">
-              <div className="h-10 w-10 rounded-full bg-line flex items-center justify-center text-muted font-bold text-lg">
-                 ALL
-              </div>
-              <h1 className="text-xl font-medium text-ink">My profiles</h1>
+           <div className="flex items-center gap-3">
+              {/* The product's name, which appeared nowhere once you were signed
+                  in — the header said "My profiles" and left you to remember
+                  what you had signed in to. */}
+              <span className="text-2xl" aria-hidden>📚</span>
+              <h1 className="font-serif text-xl text-ink">
+                ScholarMind
+              </h1>
               <button
                 onClick={onToggleTheme}
                 className="ml-2 p-2 rounded-lg hover:bg-panel-2 text-muted hover:text-ink transition-colors"
@@ -91,18 +116,64 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
               >
                  <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Create new</span><span className="sm:hidden">New</span>
               </button>
+
+              {me && (
+                <div className="flex items-center gap-2 pl-1">
+                  <span className="hidden lg:inline text-xs text-subtle" title={me.email}>
+                    {me.email}
+                  </span>
+                  <button
+                    onClick={() => api.signOut()}
+                    className="p-2 rounded-lg hover:bg-panel-2 text-muted hover:text-ink transition-colors"
+                    title="Sign out"
+                    aria-label="Sign out"
+                  >
+                    <LogOut className="w-5 h-5" />
+                  </button>
+                </div>
+              )}
            </div>
         </div>
 
-        <LandingSearch onOpenProfile={onSelectProfile} onCreateFor={onCreateFor} />
+        <AskPanel libraries={profiles} onCreateFor={onCreateFor} />
 
         {/* Content Section */}
         <div className="mb-8">
-           <h2 className="text-2xl font-medium text-ink mb-6 flex items-center gap-2">
+           <h2 className="text-2xl font-medium text-ink mb-4 flex items-center gap-2">
              {searchTerm ? (
                <>Search results <span className="text-subtle text-lg font-normal">({filteredProfiles.length})</span></>
-             ) : 'Recent profiles'}
+             ) : subject ? (
+               <>{subject} <span className="text-subtle text-lg font-normal">({filteredProfiles.length})</span></>
+             ) : (
+               <>Your libraries <span className="text-subtle text-lg font-normal">({profiles.length})</span></>
+             )}
            </h2>
+
+           {subjects.length > 0 && (
+             <div className="mb-6 flex flex-wrap gap-2">
+               <button
+                 onClick={() => setSubject(null)}
+                 aria-pressed={subject === null}
+                 className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                   subject === null ? 'bg-ink text-surface' : 'bg-panel-2 text-muted hover:text-ink'
+                 }`}
+               >
+                 All subjects
+               </button>
+               {subjects.map(([name, count]) => (
+                 <button
+                   key={name}
+                   onClick={() => setSubject(s => (s === name ? null : name))}
+                   aria-pressed={subject === name}
+                   className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                     subject === name ? 'bg-ink text-surface' : 'bg-panel-2 text-muted hover:text-ink'
+                   }`}
+                 >
+                   {name} <span className="opacity-60">{count}</span>
+                 </button>
+               ))}
+             </div>
+           )}
            
            {filteredProfiles.length === 0 && searchTerm ? (
              <div className="flex flex-col items-center justify-center py-20 text-subtle">
@@ -110,7 +181,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
                     <Search className="w-8 h-8 opacity-40" />
                 </div>
                 <p className="font-medium">No profiles found matching "{searchTerm}"</p>
-                <button onClick={() => setSearchTerm('')} className="mt-2 text-blue-600 hover:underline text-sm font-medium">Clear search</button>
+                <button onClick={() => { setSearchTerm(''); setSubject(null); }} className="mt-2 text-blue-600 hover:underline text-sm font-medium">Clear search</button>
              </div>
            ) : (
              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -178,6 +249,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
              </div>
            )}
         </div>
+        <Footer />
       </div>
     </div>
   );

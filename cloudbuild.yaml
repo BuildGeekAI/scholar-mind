@@ -2,6 +2,18 @@ substitutions:
   _REGION: us-central1
   _SERVICE: scholarmind
   _REPO: scholarmind
+  # The VPC carrying traffic to Cloud SQL. An org policy forbids public IPs on
+  # Cloud SQL, so the instance is private-IP only and both services reach it by
+  # egressing into this network rather than through the Cloud SQL connector.
+  _NETWORK: default
+  _SUBNET: default
+  # Firebase Web API key — public by design, so a substitution rather than a
+  # secret. Hiding it would only break the client.
+  _FIREBASE_WEB_API_KEY: ''
+  # Who may register. '*' allows anyone, deliberately; empty refuses to start.
+  _AUTH_ALLOWED_DOMAINS: ''
+  # The origin the browser reaches, used to build absolute URLs.
+  _PUBLIC_ORIGIN: ''
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -28,13 +40,71 @@ steps:
       # Private by default: a public URL in front of a Gemini key is a cost liability.
       - --no-allow-unauthenticated
       - --service-account=${_SERVICE}@$PROJECT_ID.iam.gserviceaccount.com
-      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind
-      - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest
+      # ACL_ENABLED is stated rather than left to default off NODE_ENV, because
+      # --set-env-vars replaces the whole variable set and this is the one
+      # variable whose silent absence would be invisible in production.
+      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind,ACL_ENABLED=true,FIREBASE_PROJECT_ID=$PROJECT_ID,FIREBASE_WEB_API_KEY=${_FIREBASE_WEB_API_KEY},AUTH_ALLOWED_DOMAINS=${_AUTH_ALLOWED_DOMAINS},PUBLIC_ORIGIN=${_PUBLIC_ORIGIN}
+      - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,DATABASE_URL=scholarmind-database-url:latest
       - --min-instances=0
       - --memory=1Gi
-      # Ingestion plus generation is slow; the default 5 minutes is the ceiling we need.
+      # Requests only enqueue now, so this no longer has to cover a full crawl.
       - --timeout=300s
       - --concurrency=80
+      - --network=${_NETWORK}
+      - --subnet=${_SUBNET}
+      # Only private ranges leave through the VPC; the Gemini API still goes
+      # straight out, so no NAT gateway is needed for it.
+      - --vpc-egress=private-ranges-only
+
+  # The queue worker: same image, different command. It is a service rather than
+  # a Cloud Run job because the queue is long-lived and pull-based — a job per
+  # unit of work would mean an invocation per paper.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}-worker
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --no-allow-unauthenticated
+      - --service-account=${_SERVICE}@$PROJECT_ID.iam.gserviceaccount.com
+      - --command=npx
+      - --args=tsx,server/worker.ts
+      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind,ACL_ENABLED=true,AUTH_ALLOWED_DOMAINS=${_AUTH_ALLOWED_DOMAINS}
+      - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,DATABASE_URL=scholarmind-database-url:latest
+      - --network=${_NETWORK}
+      - --subnet=${_SUBNET}
+      - --vpc-egress=private-ranges-only
+      # Always one instance: the worker polls, so scaling to zero means nothing
+      # is ever claimed and the queue simply stops draining.
+      - --min-instances=1
+      - --max-instances=4
+      - --memory=1Gi
+      # A paper can take minutes. The heartbeat/reaper pair is what bounds a
+      # worker that dies mid-job, not this.
+      - --timeout=3600s
+      - --concurrency=1
+      - --no-cpu-throttling
+
+  # Schema first, then the services that assume it. A Cloud Run Job rather than a
+  # build step, because the database is private-IP only and only something inside
+  # the VPC can reach it.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud run jobs deploy ${_SERVICE}-migrate \
+          --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA \
+          --region=${_REGION} \
+          --service-account=${_SERVICE}@$PROJECT_ID.iam.gserviceaccount.com \
+          --command=npx --args=tsx,server/db/migrate.ts \
+          --set-secrets=DATABASE_URL=scholarmind-database-url:latest \
+          --network=${_NETWORK} --subnet=${_SUBNET} --vpc-egress=private-ranges-only \
+          --max-retries=1 --task-timeout=600s
+        gcloud run jobs execute ${_SERVICE}-migrate --region=${_REGION} --wait
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
