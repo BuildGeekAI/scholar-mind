@@ -28,6 +28,7 @@ flowchart LR
 | 🔌 | **[API & MCP](api/README.md)** | Every endpoint, per-user API keys and their scopes, and the MCP server |
 | ☁️ | **[Deployment](deployment/README.md)** | Provisioning GCP from nothing, written from an actual run — including what went wrong |
 | 📋 | **[SDLC](sdlc/README.md)** | The plan → implement → test → release loop this repository is built with |
+| ⚖️ | **[Comparison](comparison/README.md)** | Who else does this, and where ScholarMind loses to them. Written to be honest rather than flattering |
 
 Plus **[`CLAUDE.md`](../CLAUDE.md)** at the root: the constraints and conventions
 that are load-bearing, written for whoever changes the code next. If you read one
