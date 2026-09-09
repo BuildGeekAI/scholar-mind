@@ -21,6 +21,22 @@ journey
 
 ---
 
+## 0. Signing in
+
+Email and password. Create an account, confirm the address from the link you are
+sent, then sign in — an unconfirmed address cannot sign in, because anyone can
+type any address into a form.
+
+Whether your address is allowed at all depends on how the server was configured.
+A deployment can restrict sign-in to particular domains, in which case an
+outside address is refused with a plain message rather than a mystery.
+
+Forgotten passwords are handled by the reset link on the sign-in form. The reply
+is deliberately the same whether or not an account exists — otherwise the form
+becomes a way to find out who has one.
+
+---
+
 ## 1. Profiles
 
 Each profile is an independent library — its own papers, chat history, theme, and search index. Create one per scholar or topic. Everything is stored server-side, so a profile follows you across browsers and devices.
@@ -74,6 +90,11 @@ what was extracted, so a two-hour video is never watched twice.
 
 Select papers, then choose what you want. The two buttons are independent — run
 either, both, or one and then the other later.
+
+**Work continues without you.** Both are queued on the server, so you can close
+the tab, reload, or go and do something else; progress is waiting when you come
+back. The progress bar counts finished work, not elapsed time, and a paper that
+fails counts as finished — one bad paper never stalls the rest.
 
 | Button | What it does | Roughly | Gives you |
 | --- | --- | --- | --- |
@@ -205,3 +226,73 @@ Light or dark. The toggle sits in the header of both the landing page and any
 library, and defaults to your operating system's setting. It is remembered on
 the device, and applied before the page paints — so switching to dark does not
 flash white first.
+
+---
+
+## 10. Sharing
+
+Every library has a visibility, and by default it is **readable by everyone in
+your organisation**. The other two settings are:
+
+| Visibility | Who can read it |
+| --- | --- |
+| **Organisation** | Everyone signed in to your organisation (the default) |
+| **Team** | Only members of your team |
+| **Private** | Only you, plus anyone you share it with by name |
+
+On top of that you can share a library with **specific people**, as a viewer or
+an editor. Sharing only ever adds access — it can never take it away — so a
+private library shared with one colleague is readable by exactly you and them.
+
+| Role | Can |
+| --- | --- |
+| **Viewer** | Read the library, ask it questions, cite it |
+| **Editor** | All of that, plus add and remove sources |
+| **Owner** | All of that, plus share it and delete it |
+
+Only the owner can change sharing or delete a library. An editor adding people
+would make sharing spread by accident.
+
+You can only share with people who have already signed in at least once. There
+is no invitation flow, and sharing with an address nobody has used would silently
+reach nobody.
+
+---
+
+## 11. Search
+
+Search runs across **every library you can reach** — your own and any shared with
+you — in one query. Results are passages, not just titles, so you can see the
+sentence that matched before opening anything.
+
+Narrow it to your own libraries, your team's, or one particular library.
+
+You will never see a result from a library you do not have access to. That is not
+a filter applied afterwards; the permission check is part of the same query, so
+there is no step that could be skipped.
+
+---
+
+## 12. Advisors
+
+Any library can be turned into an **advisor**: a way to ask questions of that
+person's published work, answered in their register.
+
+Turn one on from a library's header. Give it a name, a title, and a short note on
+how it engages — its manner and standpoint, not its opinions. Everything factual
+comes from the indexed work.
+
+**What an advisor is:** a way to read a body of published work through a voice,
+with every answer showing the passages it came from.
+
+**What it is not:** the person. An advisor never claims to be them, and when the
+indexed work does not address a question it says so rather than inventing a
+plausible position. That is not politeness — an advisor with nothing relevant
+indexed is not asked at all.
+
+Ask several at once. Each answers from their own work, separately, so you see
+where they genuinely differ rather than an averaged voice; a summary of their
+agreements and disagreements is available if you want one.
+
+An advisor is a library, so it shares like one. Build an advisor once and share
+it with your organisation, and everybody consults the same one.

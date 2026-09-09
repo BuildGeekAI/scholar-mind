@@ -1,6 +1,6 @@
 # Architecture
 
-A React SPA served by a small Node API. The browser is a view: no credentials, no persisted state. Everything durable lives in Firestore and Cloud Storage; every model call happens server-side.
+A React SPA served by a small Node API. The browser is a view: no credentials, no persisted state. Everything relational lives in Postgres — tenancy, access control, sources, jobs and the search index — bytes live in Cloud Storage, and every model call happens server-side.
 
 > Replaces an earlier design where the browser called Gemini directly and stored everything — including base64 images and audio — in one localStorage key. That leaked the API key into the client bundle and exhausted the ~5MB quota after a handful of papers.
 
@@ -32,7 +32,7 @@ flowchart TB
     IN --> BS
     IN --> RP
 
-    RP --> FS[("Firestore")]
+    RP --> FS[("Postgres")]
     BS --> BLOB[("GCS / filesystem")]
     GM --> GEM["Gemini Developer API"]
 
@@ -62,43 +62,102 @@ There is no separate development API, so there is no drift between environments.
 
 ```mermaid
 erDiagram
-    PROFILE ||--o{ PAPER : "subcollection"
-    PROFILE ||--o{ MESSAGE : "subcollection"
+    ORG ||--o{ TEAM : has
+    ORG ||--o{ PROFILE : owns
+    USER ||--o{ PROFILE : owns
+    PROFILE ||--o{ PAPER : has
+    PROFILE ||--o{ MESSAGE : has
+    PROFILE ||--o{ GRANT : "shared by"
+    PROFILE ||--o{ DOCUMENT : indexed
+    DOCUMENT ||--o{ CHUNK : "split into"
     PAPER ||--o{ BLOB : "keys reference"
     PROFILE ||--o| STORE : "one File Search store"
 
     PROFILE {
-        string id PK
-        string ownerId "from IAP"
-        string title
-        string scholarName
-        string fileSearchStoreName
+        text id PK
+        uuid org_id FK
+        uuid team_id FK
+        uuid owner_id FK
+        enum visibility "private | team | org"
+        bool advisor_enabled
+    }
+    GRANT {
+        text resource_id FK
+        enum principal_type "user | team | org"
+        uuid principal_id
+        enum role "viewer | editor | owner"
     }
     PAPER {
-        string id PK
-        string status "discovered→converted"
-        string stage "transient progress"
-        string pdfKey "→ blob"
-        string audioKey "→ blob"
-        string illustrationKey "→ blob"
-        string fileSearchDocName
+        text id PK
+        text status "discovered→converted"
+        text stage "transient progress"
+        text index_status
+        text pdf_key "→ blob"
     }
-    MESSAGE {
-        string id PK
-        string role
-        string content
-        json citations
-    }
-    BLOB {
-        string key PK "profiles/{p}/{paper}/{kind}"
-        bytes data
-        string contentType
+    CHUNK {
+        bigint id PK
+        text text
+        tsvector tsv "generated"
+        vector embedding
     }
 ```
 
-**Papers and messages are subcollections, not fields.** The previous model kept every paper inside one profile document, so editing a title rewrote the entire library. Writes are now proportional to what changed.
+**One paper per row.** The pre-Postgres model kept every paper inside one profile
+document, so editing a title rewrote the entire library. Writes are proportional
+to what changed.
 
-**Blobs are keys, never inline.** Bytes never enter React state or a Firestore document. `/api/blobs/*` checks ownership against the profile ID embedded in the key, so a key alone is not a capability.
+**Every resource carries org, team and owner, plus a visibility.** Grants sit on
+top and name individuals or groups. They are strictly additive: a grant can widen
+access and never narrow it, so a private library shared with one colleague is
+readable by exactly its owner and that colleague.
+
+**Authorization is one predicate, used everywhere.** `authz.visibilityPredicate`
+is a SQL fragment composed into every query that touches a profile. Loading a
+resource *is* the check, so an unreachable profile and a missing one are
+indistinguishable and both answer 404 — there is no separate "can I?" call to
+forget.
+
+Visibility never confers write, and ownership is not grantable: an editor can add
+papers to a shared library but cannot destroy it.
+
+**Blobs are keys, never inline.** Bytes never enter React state or a database
+row. `/api/blobs/*` resolves the profile ID embedded in the key and applies the
+same predicate, so a key alone is not a capability.
+
+---
+
+## Work outlives the request
+
+Crawling a scholar and indexing their papers takes minutes. Doing that inside an
+HTTP request meant the work died with the connection and competed with serving
+for the same instance.
+
+```mermaid
+flowchart LR
+    R["POST /process"] -->|"202 {runId}"| C["Client"]
+    R -->|"enqueue, same txn"| J[("jobs")]
+    J -->|"FOR UPDATE SKIP LOCKED"| W["Worker"]
+    W --> J
+    C -.->|"poll + ETag"| S["/status"]
+    S --> J
+
+    style W fill:#ecfdf5,stroke:#059669
+```
+
+The queue is rows in the same database as the data it operates on, claimed with
+`SELECT … FOR UPDATE SKIP LOCKED`. Two properties follow, and neither is
+available from an external queue:
+
+- **Enqueueing happens in the transaction that wrote the row being processed**,
+  so there is no dual-write to reconcile.
+- **The job row is the status the client polls**, so there is no second store to
+  keep in sync.
+
+Retries back off exponentially, spent jobs dead-letter rather than looping, and a
+worker that dies mid-job is reaped by heartbeat and its work requeued.
+
+Processing therefore no longer streams. Chat still does, because streaming live
+tokens is the right thing there.
 
 ---
 
@@ -309,17 +368,24 @@ flowchart LR
 The MCP server is a **client of the HTTP API**, not a second implementation, so
 an agent and a person cannot drift apart on what a library contains.
 
-Authentication has three outcomes rather than two:
+Identity resolves in one order — **API key → session cookie → IAP → dev user** —
+and a rejected key stops there rather than falling through:
 
 | Presented | Result |
 | :--- | :--- |
-| Correct key | The API user |
+| Valid per-user key | Its owner, with the key's scope |
 | **Wrong key** | **401, in every environment — including development** |
-| No key | The dev user locally, IAP in production |
+| Session cookie | The person who signed in with Firebase |
+| Nothing | The dev user locally; 401 in production |
 
 Refusing a wrong key locally is the point. The obvious implementation falls
 through to the dev user on a mismatch, so a misconfigured integration works
 perfectly on a laptop and fails only once deployed.
+
+A key **acts as its owner** and inherits their sharing exactly, which is what
+keeps this cheap: there is no second permission model to hold in step with the
+first. A scope can narrow what a key may do, never widen it, and no key may mint
+another — otherwise revoking one would not revoke what it created.
 
 → [API & MCP reference](../api/README.md)
 
@@ -424,6 +490,39 @@ Wrapping server-side means the browser needs no sample conversion of its own.
 
 ## Identity
 
-`server/identity.ts` verifies the **signed IAP JWT assertion** against Google's public keys. The plain `x-goog-authenticated-user-email` header is deliberately not trusted alone — anything able to reach the service directly could forge it. When `IAP_AUDIENCE` is unset the server **refuses** assertions rather than falling back. Development injects a stub user.
+Sign-in is **Firebase Authentication**: email and password, with Firebase owning
+resets, lockout and breach checking. The client signs in, receives an ID token,
+and posts it once; the server verifies it and issues a session.
 
-Firestore rules deny all direct client access: every read and write is mediated by the API server's service account.
+A Firebase ID token is an ordinary RS256 JWT — issuer
+`securetoken.google.com/<project>`, audience `<project>` — and `identity.ts`
+already verified IAP assertions with the same primitive, so this needed a cert
+fetch and a cache rather than `firebase-admin`.
+
+The token is exchanged for a **session row** rather than sent on every request.
+Firebase tokens expire hourly and cannot be revoked server-side without the admin
+SDK; a session row can be revoked, and a cookie works for SSE and blob URLs where
+attaching a header is awkward. The cost is stated plainly: signing out of
+Firebase does not end the server session, so the client does both.
+
+**Unverified addresses are refused.** Anyone can register any address, so an
+unverified one proves nothing — and with a domain allowlist it would otherwise
+walk straight into that domain's org. A fresh password account is unverified by
+default, so this is the ordinary path rather than an edge case.
+
+**Two fail-closed startup guards**, both aborting rather than warning:
+
+- `NODE_ENV` must be `production` on Cloud Run, or every caller resolves to the
+  same dev identity and every library collapses into one namespace.
+- `AUTH_ALLOWED_DOMAINS` must be set, or anyone who can receive email could
+  register and read every org-visible library. `*` says open registration is
+  deliberate; empty says it by accident, which is the case worth catching.
+
+A crashed revision is a far better outcome than a serving one that is wide open.
+
+IAP verification remains in place and runs when there is no session, so an
+existing IAP deployment keeps working. It is dormant on a Firebase deployment.
+
+The database is reachable only on a private IP inside the VPC — an org policy
+forbids public ones — so there is no path by which a client, or a laptop, reaches
+it directly.

@@ -10,7 +10,7 @@ flowchart LR
     C["⌨️ curl / scripts<br/><i>x-api-key</i>"] --> R
     M["🤖 MCP client<br/><i>mcp/server.mjs</i>"] --> R
 
-    R["Hono router<br/><b>/api/*</b>"] --> S["Firestore · Blobs · Gemini"]
+    R["Hono router<br/><b>/api/*</b>"] --> S["Postgres · Blobs · Gemini"]
 
     style B fill:#fef3c7,stroke:#d97706
     style C fill:#f0f9ff,stroke:#0284c7
@@ -21,27 +21,64 @@ flowchart LR
 
 ## Authentication
 
-Set `SCHOLARMIND_API_KEY` in `.env`, then send it as `x-api-key` or a bearer token.
+Three ways in, resolved in this order: **API key → session cookie → IAP → dev user**.
+
+### Per-user API keys
+
+Mint one from a signed-in session; it is returned exactly once, because only a
+hash is stored.
 
 ```bash
-export SM=http://localhost:8080
-export KEY=your-key-here
+curl -X POST $SM/api/keys -H 'content-type: application/json' \
+  -d '{"name":"laptop","scope":"read"}'
+# {"key":"sm_3b140aeb7208_e17c40…","record":{…}}
 
-curl -s $SM/api/profiles -H "x-api-key: $KEY"
-curl -s $SM/api/profiles -H "Authorization: Bearer $KEY"
+curl -s $SM/api/profiles -H "x-api-key: sm_3b140aeb7208_e17c40…"
+curl -s $SM/api/profiles -H "Authorization: Bearer sm_3b140aeb7208_e17c40…"
 ```
 
-Three outcomes, and the middle one is the one that matters:
+A key **acts as its owner** and inherits their sharing exactly — there is no
+second permission model. A `scope` can only narrow it:
+
+| Scope | May |
+| --- | --- |
+| `read` | `GET` anything the owner can see, plus `POST /chat` and `POST /tts` |
+| `write` | everything the owner can do |
+
+Neither scope may mint or revoke keys. Otherwise a leaked write key could create
+successors that outlive it, and revoking the original would not revoke the access
+it was used to create. **Key management requires a signed-in session.**
 
 | Request | Result |
 | :--- | :--- |
-| Correct key | Authenticated as the API user |
+| Valid key | Authenticated as its owner, with its scope |
 | **Wrong key** | **`401` — in every environment, including local development** |
-| No key at all | The local browser session (dev), or IAP (production) |
+| Revoked or expired key | `401`, indistinguishable from an unknown one |
+| Read-only key attempting a write | `403` |
+| No key at all | The session cookie, then IAP, then the dev user (local only) |
 
-A wrong key is refused even locally on purpose. The obvious implementation falls
-through to the dev user when the key does not match, so a misconfigured
-integration works perfectly on a laptop and fails only once deployed.
+A wrong key is refused even locally on purpose: falling through to the dev user
+would mean a misconfigured integration works on a laptop and fails only once
+deployed.
+
+> `SCHOLARMIND_API_KEY` still works as a deployment-wide bootstrap key, for
+> existing MCP clients and scripts. It maps to **one** configured identity, so
+> two people sharing it share an account. Prefer per-user keys.
+
+### Browser sessions
+
+Firebase Authentication issues an ID token; the server verifies it and exchanges
+it for a session cookie once. Everything after that is an ordinary cookie
+request — no `Authorization` header, no token refresh.
+
+```
+client → Firebase signInWithPassword → ID token
+       → POST /api/auth/firebase { idToken }
+       → sm_session cookie
+```
+
+An unverified address is refused, and `AUTH_ALLOWED_DOMAINS` decides which
+domains may sign in at all.
 
 `/api/healthz` needs no authentication.
 
@@ -103,8 +140,12 @@ a link the library already has.
 
 ### Processing
 
-`POST /api/profiles/:id/process` — `{paperIds: [...], mode}` — streams
-server-sent events. The two halves are separate because they cost differently.
+`POST /api/profiles/:id/process` — `{paperIds: [...], mode}` — **enqueues** and
+returns `202 {runId}`. The work outlives the request: crawling a scholar and
+indexing their papers takes minutes, so a dropped connection, a reload or a
+closed tab no longer cancels anything.
+
+The two halves are separate because they cost differently.
 
 | `mode` | Does | Roughly |
 | :--- | :--- | :--- |
@@ -113,22 +154,121 @@ server-sent events. The two halves are separate because they cost differently.
 | `both` | Index, generate, then re-index against the write-up | The sum |
 
 ```bash
-curl -sN $SM/api/profiles/$ID/process -H "x-api-key: $KEY" -H 'content-type: application/json' \
+curl -s $SM/api/profiles/$ID/process -H "x-api-key: $KEY" -H 'content-type: application/json' \
   -d '{"paperIds":["source-123"],"mode":"index"}'
-```
-```
-event: paper
-data: {"id":"source-123","stage":"fetching","indexStatus":"indexing"}
-
-event: paper
-data: {"id":"source-123","indexStatus":"indexed","indexedKind":"pdf","pdfReused":true}
-
-event: done
-data: {}
+# {"runId":"4a3413ca-…","enqueued":1,"skipped":0}
 ```
 
-`pdfReused: true` means another library had already fetched that paper, so this
-run skipped resolution and download entirely.
+Asking twice is idempotent. A second identical request returns the run already
+doing the work, with `enqueued: 0` and `alreadyRunning: true` — not a duplicate.
+
+**Nothing happens without a worker running.** Locally that is `npm run worker`.
+
+### Runs and status
+
+| Method | Path | Does |
+| :--- | :--- | :--- |
+| `GET` | `/api/runs/:runId` | One run, with its job counts |
+| `GET` | `/api/profiles/:id/status` | Per-source download / enrich / index, plus the active run |
+
+Both support `ETag` / `If-None-Match`, so a two-second poll costs a `304`.
+
+```bash
+curl -s $SM/api/profiles/$ID/status -H "x-api-key: $KEY"
+```
+```json
+{
+  "run": {"id":"4a3413ca-…","kind":"crawl","status":"running"},
+  "progress": {"queued":1,"running":4,"succeeded":1,"failed":0,"total":6},
+  "papers": [
+    {"id":"source-123","title":"…","stage":"fetching",
+     "download":"running","enrich":"pending","index":"pending"}
+  ]
+}
+```
+
+A run reaching `cancelled` with `detail.duplicate` means the crawl found the
+scholar already has a library — the check that needs the resolved name can only
+run after the model call, so it reports here rather than as a `409`. Nothing was
+written.
+
+`pdfReused: true` on a source means another library had already fetched that
+paper, so this run skipped resolution and download entirely.
+
+### Sharing
+
+Visibility is the broad control; grants are additive on top and name individuals.
+A grant can only widen access, never narrow it.
+
+| Method | Path | Does |
+| :--- | :--- | :--- |
+| `GET` | `/api/profiles/:id/sharing` | Visibility, your role, current grants, and who you could share with |
+| `POST` | `/api/profiles/:id/sharing` | Share — `{email, role}` where role is `viewer` or `editor` |
+| `DELETE` | `/api/profiles/:id/sharing?principalType=user&principalId=` | Revoke |
+| `PATCH` | `/api/profiles/:id` | Change visibility — `{visibility}`: `private`, `team` or `org` |
+
+Only the **owner** may change sharing. An editor can add papers; letting them also
+add people would make sharing transitive by accident. Sharing is with people who
+already exist — there is no invitation flow, and a grant to an address nobody has
+signed in as would match nothing.
+
+### Search
+
+One query across every library you can reach, however many that is.
+
+| Method | Path | Does |
+| :--- | :--- | :--- |
+| `GET` | `/api/search?q=&scope=&profileId=&limit=` | Hybrid keyword + semantic retrieval |
+
+`scope` is `me`, `team`, `org` (default) or `profile`. The authorization
+predicate is a clause in the same query as the retrieval, so results can never
+include a library you cannot see.
+
+> Semantic retrieval requires `0004_embeddings.sql`. Without it this is
+> keyword-only and questions phrased unlike the source text return little.
+
+### Advisors
+
+An advisor is a library given a voice. Consulting one reads its author's
+published work through that voice — it is not a simulation of the person.
+
+| Method | Path | Does |
+| :--- | :--- | :--- |
+| `GET` | `/api/advisors` | Advisors you can reach, with indexed counts |
+| `PATCH` | `/api/profiles/:id/advisor` | `{enabled, name, title, brief}` |
+| `POST` | `/api/consult` | Ask a panel — `{question, advisorIds, synthesise?}` |
+| `GET` | `/api/consultations` | Past consultations |
+| `GET` | `/api/consultations/:id` | One, with its answers and sources |
+
+`/api/consult` streams one `advisor` event per answer, so the first arrives well
+before the last, then an optional `synthesis` and a `done`.
+
+Answers cite the passages **actually passed to the model** — a fact about our own
+retrieval, not something the model reported. An advisor whose indexed work does
+not address the question says so and is never asked at all.
+
+### Crawlers
+
+A crawler is the standing definition of where a library's content comes from; a
+run is one execution of it.
+
+| Method | Path | Does |
+| :--- | :--- | :--- |
+| `GET` | `/api/crawlers?profileId=` | List |
+| `POST` | `/api/crawlers` | Create — `{profileId, target, intervalSeconds?}` |
+| `PATCH` | `/api/crawlers/:id` | `{target, intervalSeconds, enabled}` |
+| `DELETE` | `/api/crawlers/:id` | Remove |
+| `POST` | `/api/crawlers/:id/run` | Run now — returns `202 {runId}` |
+
+`intervalSeconds` omitted means manual only.
+
+### API keys
+
+| Method | Path | Does |
+| :--- | :--- | :--- |
+| `GET` | `/api/keys` | Your live keys — never the key itself |
+| `POST` | `/api/keys` | Mint — `{name, scope, expiresInDays?}`. **Returns the key once** |
+| `DELETE` | `/api/keys/:keyId` | Revoke, immediately |
 
 ### Asking
 

@@ -119,18 +119,23 @@ the two happened.
 ```mermaid
 flowchart TB
     B["🌐 Browser<br/><b>no API key · no stored state</b>"]
-    C["⌨️ curl · MCP<br/><i>x-api-key</i>"]
+    C["⌨️ curl · MCP<br/><i>per-user API key</i>"]
 
     subgraph SRV["Hono router — mounted by Vite in dev AND node-server in prod"]
         R["/api/*"]
     end
 
-    B -->|fetch| R
-    C -->|fetch| R
+    B -->|"session cookie"| R
+    C -->|"x-api-key"| R
 
-    R --> FS[("Firestore<br/><i>profiles · sources · messages · corpus</i>")]
+    R --> PG[("Postgres<br/><i>tenancy · ACLs · papers · jobs · search index</i>")]
     R --> BL[("Blobs<br/><i>GCS or ./.data</i>")]
     R --> GEM
+
+    W["Queue worker<br/><i>separate process</i>"] --> PG
+    W --> GEM
+    R -.->|"enqueue"| PG
+    PG -.->|"claim"| W
 
     subgraph GEM["Gemini Developer API"]
         direction LR
@@ -143,11 +148,21 @@ flowchart TB
     style B fill:#fef3c7,stroke:#d97706
     style C fill:#f0f9ff,stroke:#0284c7
     style SRV fill:#f0f9ff,stroke:#0284c7
+    style W fill:#ecfdf5,stroke:#059669
     style GEM fill:#f5f3ff,stroke:#7c3aed
 ```
 
 **One router implementation** serves development and production, so nothing
 works locally but breaks when deployed.
+
+**Work outlives the request.** Crawling a scholar and indexing their papers takes
+minutes, so requests enqueue and return a run id; the worker does the work and
+the client polls. Closing the tab no longer cancels anything.
+
+**Every resource belongs to an org, a team and an owner,** with a visibility and
+optional per-person grants. The authorization predicate is part of the same query
+as the data it guards, which is also why the search index is in Postgres rather
+than in Gemini's File Search — see [Constraints](#constraints-worth-knowing).
 
 → [Architecture in depth](docs/architecture/README.md)
 
@@ -155,33 +170,47 @@ works locally but breaks when deployed.
 
 ## Quick start
 
-**Needs** Node 22+, a [Gemini API key](https://aistudio.google.com/apikey), and
-Java 11+ for the Firestore emulator.
+**Needs** Node 22+, Docker, and a [Gemini API key](https://aistudio.google.com/apikey).
 
 ```bash
 npm install
 cp .env.example .env      # add GEMINI_API_KEY
+docker compose up -d db   # Postgres 17 + pgvector on :5432
+npm run db:migrate
 ```
 
 ```mermaid
 flowchart LR
-    A["npm run emulator<br/><i>terminal 1</i>"] --> B[("Firestore<br/>:8085")]
-    C["npm run dev:local<br/><i>terminal 2</i>"] --> D["App + API<br/>:3000"]
+    A["docker compose up -d db"] --> B[("Postgres :5432")]
+    C["npm run dev:local<br/><i>terminal 1</i>"] --> D["App + API<br/>:3000"]
+    E["npm run worker<br/><i>terminal 2</i>"] --> B
     D --> B
-    D --> E["./.data/blobs"]
-    D -.->|"always the real API"| F["Gemini"]
+    D --> F["./.data/blobs"]
+    D -.->|"always the real API"| G["Gemini"]
 
-    style F fill:#f5f3ff,stroke:#7c3aed
+    style G fill:#f5f3ff,stroke:#7c3aed
+    style E fill:#ecfdf5,stroke:#059669
 ```
 
 Verify with `curl localhost:3000/api/healthz`:
 
 ```json
-{"ok": true, "geminiKey": "configured", "firestore": "emulator", "blobs": "filesystem"}
+{"ok": true, "geminiKey": "configured", "database": "reachable", "acl": "disabled", "blobs": "filesystem"}
 ```
 
-> **No File Search emulator exists.** Retrieval always calls the real API, even
-> locally. `FILE_SEARCH_STORE_PREFIX=dev-` keeps local stores identifiable.
+> **Run the worker.** Without it, indexing and enrichment queue up and nothing
+> ever happens — the UI will sit at "queued" indefinitely.
+
+> **Semantic search needs one measured number.** `gemini-embedding-2`'s output
+> dimension is not in this repository. Until you supply it, search is
+> keyword-only:
+> ```bash
+> GEMINI_API_KEY=… npm run spike:postgres    # read check G2
+> EMBEDDING_DIM=<n> npm run db:migrate
+> ```
+
+> **No File Search emulator exists.** Chat grounding always calls the real API,
+> even locally. `FILE_SEARCH_STORE_PREFIX=dev-` keeps local stores identifiable.
 
 → [Development guide](docs/development/README.md)
 
@@ -234,6 +263,7 @@ stay on `generateContent`.
 ## Constraints worth knowing
 
 All four were found by testing the live API, and all four shape the design.
+The third is the reason the architecture looks the way it does.
 
 **Grounding tools are mutually exclusive.** File Search combines with neither
 Google Search nor URL Context. So work is staged, and chat exposes a visible
@@ -243,10 +273,14 @@ toggle rather than guessing.
 the `[` that opens a JSON array. Grounded structured generation therefore runs
 in two calls: grounded prose, then structuring with no tools.
 
-**Retrieval cannot be scoped below a store.** `metadataFilter` only matches the
-API's own recognised keys — an app-defined key silently matches nothing — and a
-call accepts at most five stores. The per-profile store boundary is what keeps
-one library out of another's answers.
+**Retrieval cannot be scoped below a store, so the search index moved to
+Postgres.** `metadataFilter` only matches the API's own recognised keys — an
+app-defined key silently matches nothing — and a call accepts at most five
+stores. Under sharing, the set of libraries a person can see differs per person
+and routinely exceeds five, so a store boundary cannot express it. The index now
+lives in Postgres, where the authorization predicate is a clause in the same
+query as the retrieval. File Search is kept for single-profile chat grounding,
+where the cap is irrelevant.
 
 **The Interactions API does not take `parts`.** Media goes in as typed content
 blocks: `{type:'video', uri}` with a YouTube link works directly, no download.
@@ -259,8 +293,10 @@ blocks: `{type:'video', uri}` with a YouTube link works directly, no download.
 
 | Command | Purpose |
 | :--- | :--- |
-| `npm run dev:local` | App + API against the emulator |
-| `npm run emulator` | Firestore emulator |
+| `npm run dev:local` | App + API against the local database |
+| `npm run worker` | Queue worker — nothing is processed without it |
+| `npm run db:migrate` | Apply migrations (`db:reset` drops and rebuilds) |
+| `npm run spike:postgres` | Check pgvector and measure the embedding dimension |
 | `npm test` | Vitest — pure logic, no network |
 | `npm run build` | Production client build |
 | `npm start` | Production server |
