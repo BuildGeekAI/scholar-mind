@@ -5,6 +5,8 @@ import * as api from './services/api';
 import Dashboard from './components/Dashboard';
 import ProfileWorkspace from './components/ProfileWorkspace';
 import SignIn from './components/SignIn';
+import UndoToast from './components/UndoToast';
+import { useDeferredAction } from './components/useDeferredAction';
 
 const EMOJIS = ['🤖', '🐳', '🤝', '🦀', '🏠', '⚖️', '🛡️', '☁️', '📒', '🦙'];
 
@@ -19,6 +21,10 @@ const App: React.FC = () => {
   // null while unknown, false once the server has said it does not know us.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [me, setMe] = useState<api.Me | null>(null);
+
+  // Deletes happen at once and commit a few seconds later, so nothing has to be
+  // confirmed and a wrong one is still recoverable.
+  const { pending, defer } = useDeferredAction();
 
 
   useEffect(() => { applyTheme(theme); }, [theme]);
@@ -109,17 +115,39 @@ const App: React.FC = () => {
    * broken if the UI waits. The row disappears immediately and is restored if
    * the server rejects it.
    */
-  const handleDeleteProfile = async (id: string, e?: React.MouseEvent) => {
+  /**
+   * Removes it now, commits after the undo window.
+   *
+   * No confirmation: a dialog interrupts every delete to guard against the rare
+   * wrong one, and gets dismissed unread. Nothing is sent until the window
+   * closes, so undo needs no server support.
+   */
+  const handleDeleteProfile = (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    const profile = profiles.find(p => p.id === id);
     const snapshot = profiles;
-    setProfiles(prev => prev.filter(p => p.id !== id));
-    if (activeProfileId === id) setActiveProfileId(null);
-    try {
-      await api.deleteProfile(id);
-    } catch (err: any) {
-      setProfiles(snapshot);
-      alert(err.message || 'Could not delete profile.');
-    }
+    const wasOpen = activeProfileId === id;
+
+    defer(
+      id,
+      `“${profile?.title || 'library'}”`,
+      () => {
+        setProfiles(prev => prev.filter(p => p.id !== id));
+        if (wasOpen) setActiveProfileId(null);
+      },
+      () => {
+        api.deleteProfile(id).catch((err: any) => {
+          // The server refused, so put it back rather than leaving the list
+          // claiming something is gone when it is not.
+          setProfiles(snapshot);
+          alert(err.message || 'Could not delete that library.');
+        });
+      },
+      () => {
+        setProfiles(snapshot);
+        if (wasOpen) setActiveProfileId(id);
+      }
+    );
   };
 
   // Identity is settled before anything else renders: every other view assumes
@@ -191,18 +219,9 @@ const App: React.FC = () => {
         theme={theme}
         onToggleTheme={toggleTheme}
         onSelectProfile={setActiveProfileId}
-        onDeleteProfile={(id, e) => {
-          // Stopped before the prompt, not inside the handler: otherwise
-          // cancelling the delete still let the click reach the card and
-          // opened the profile the user just decided to keep.
-          e.stopPropagation();
-          const profile = profiles.find(p => p.id === id);
-          const name = profile?.title || 'this profile';
-          if (window.confirm(`Delete “${name}”? Its sources, chat and search index go with it. This cannot be undone.`)) {
-            handleDeleteProfile(id, e);
-          }
-        }}
+        onDeleteProfile={handleDeleteProfile}
       />
+      <UndoToast pending={pending} />
     </>
   );
 };
