@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Trash2, Search, X, Download, Sun, Moon } from 'lucide-react';
+import { Plus, Trash2, Search, X, Download, Sun, Moon, LogOut } from 'lucide-react';
 import { Theme } from './theme';
 import * as api from '../services/api';
 import AskPanel from './AskPanel';
+import Footer from './Footer';
 
 interface DashboardProps {
   profiles: api.ProfileRecord[];
@@ -11,11 +12,12 @@ interface DashboardProps {
   /** Creates a profile and immediately searches it for the given scholar. */
   onCreateFor: (query: string) => Promise<void>;
   onCreateProfile: () => void;
+  me: api.Me | null;
   onSelectProfile: (id: string) => void;
   onDeleteProfile: (id: string, e: React.MouseEvent) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, onCreateFor, onCreateProfile, onSelectProfile, onDeleteProfile }) => {
+const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, onCreateFor, onCreateProfile, me, onSelectProfile, onDeleteProfile }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [subject, setSubject] = useState<string | null>(null);
 
@@ -59,11 +61,14 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
         
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
-           <div className="flex items-center gap-4">
-              <div className="h-10 w-10 rounded-full bg-line flex items-center justify-center text-muted font-bold text-lg">
-                 ALL
-              </div>
-              <h1 className="text-xl font-medium text-ink">My profiles</h1>
+           <div className="flex items-center gap-3">
+              {/* The product's name, which appeared nowhere once you were signed
+                  in — the header said "My profiles" and left you to remember
+                  what you had signed in to. */}
+              <span className="text-2xl" aria-hidden>📚</span>
+              <h1 className="font-serif text-xl text-ink">
+                ScholarMind
+              </h1>
               <button
                 onClick={onToggleTheme}
                 className="ml-2 p-2 rounded-lg hover:bg-panel-2 text-muted hover:text-ink transition-colors"
@@ -111,6 +116,22 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
               >
                  <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Create new</span><span className="sm:hidden">New</span>
               </button>
+
+              {me && (
+                <div className="flex items-center gap-2 pl-1">
+                  <span className="hidden lg:inline text-xs text-subtle" title={me.email}>
+                    {me.email}
+                  </span>
+                  <button
+                    onClick={() => api.signOut()}
+                    className="p-2 rounded-lg hover:bg-panel-2 text-muted hover:text-ink transition-colors"
+                    title="Sign out"
+                    aria-label="Sign out"
+                  >
+                    <LogOut className="w-5 h-5" />
+                  </button>
+                </div>
+              )}
            </div>
         </div>
 
@@ -228,6 +249,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
              </div>
            )}
         </div>
+        <Footer />
       </div>
     </div>
   );

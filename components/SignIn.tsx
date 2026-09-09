@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Loader2, LogIn, MailCheck } from 'lucide-react';
 import * as api from '../services/api';
 import * as firebase from '../services/firebase';
+import Footer from './Footer';
 
 /**
  * Email and password sign-in, against Firebase.
@@ -97,12 +98,15 @@ const SignIn: React.FC = () => {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 dark:bg-slate-950">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-6 dark:bg-slate-950">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mb-4 text-4xl" aria-hidden>📚</div>
-          <h1 className="font-serif text-2xl text-slate-900 dark:text-slate-100">ScholarMind</h1>
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          <h1 className="font-serif text-3xl text-slate-900 dark:text-slate-100">ScholarMind</h1>
+          <p className="mt-1 text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500">
+            Read a scholar's work, and ask it questions
+          </p>
+          <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
             {mode === 'signin' ? 'Sign in to reach your libraries.' : 'Create an account.'}
           </p>
         </div>
@@ -171,6 +175,9 @@ const SignIn: React.FC = () => {
             </div>
           </form>
         )}
+      </div>
+      <div className="w-full max-w-sm">
+        <Footer />
       </div>
     </div>
   );

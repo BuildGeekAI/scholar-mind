@@ -18,6 +18,7 @@ const App: React.FC = () => {
 
   // null while unknown, false once the server has said it does not know us.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [me, setMe] = useState<api.Me | null>(null);
 
 
   useEffect(() => { applyTheme(theme); }, [theme]);
@@ -47,8 +48,8 @@ const App: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        await api.me();
-        if (!cancelled) setSignedIn(true);
+        const who = await api.me();
+        if (!cancelled) { setMe(who); setSignedIn(true); }
       } catch (e: any) {
         if (cancelled) return;
         setSignedIn(false);
@@ -212,6 +213,7 @@ const App: React.FC = () => {
       <Dashboard
         profiles={profiles}
         onCreateProfile={handleCreateProfile}
+        me={me}
         onCreateFor={handleCreateFor}
         theme={theme}
         onToggleTheme={toggleTheme}
