@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Globe, Library, Loader2, Quote, Send, UserRoundCog } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import Markdown from './Markdown';
 import { Citation } from '../types';
 import * as api from '../services/api';
 
@@ -229,9 +229,7 @@ const ChatPane: React.FC<Props> = ({
                       <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Thinking…
                     </p>
                   ) : (
-                    <div className="prose prose-sm max-w-none dark:prose-invert">
-                      <ReactMarkdown>{turn.text}</ReactMarkdown>
-                    </div>
+                    <Markdown compact>{turn.text}</Markdown>
                   )}
 
                   {!!turn.citations?.length && (

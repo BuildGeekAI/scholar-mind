@@ -361,6 +361,9 @@ export const createRouter = () => {
     const user = c.get('user');
     const ctx = c.get('ctx');
     return c.json({
+      // The caller's own id, so the interface can tell what it may destroy
+      // rather than offering controls that 404.
+      userId: ctx.userId,
       email: user.email,
       name: user.name,
       picture: user.picture,

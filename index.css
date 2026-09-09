@@ -1,3 +1,7 @@
+/* KaTeX, for the maths in answers. Imported first so the prose styles
+   below can override its defaults where they disagree. */
+@import 'katex/dist/katex.min.css';
+
 /* Self-hosted; replaces the Google Fonts stylesheet the CDN build relied on. */
 @import '@fontsource/inter/300.css';
 @import '@fontsource/inter/400.css';

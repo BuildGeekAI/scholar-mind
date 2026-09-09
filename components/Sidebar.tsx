@@ -10,6 +10,7 @@ import {
   Sun,
   Trash2,
   UserRoundCog,
+  Users,
   X,
 } from 'lucide-react';
 import { Theme } from './theme';
@@ -199,6 +200,10 @@ const Sidebar: React.FC<Props> = ({
             ) : (
               shown.map(profile => {
                 const active = libraryId === profile.id;
+                // Only the owner may delete, so only the owner is offered it.
+                // Showing the control to everyone meant a shared library
+                // presented a trash icon that silently 404'd.
+                const mine = !me || profile.ownerId === me.userId;
                 return (
                   <div
                     key={profile.id}
@@ -227,13 +232,22 @@ const Sidebar: React.FC<Props> = ({
                     >
                       <Download className="h-3.5 w-3.5" />
                     </a>
-                    <button
-                      onClick={e => onDeleteProfile(profile.id, e)}
-                      className="shrink-0 text-subtle opacity-0 transition hover:text-red-500 group-hover:opacity-100 focus:opacity-100"
-                      title={`Delete ${profile.title}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    {mine ? (
+                      <button
+                        onClick={e => onDeleteProfile(profile.id, e)}
+                        className="shrink-0 text-subtle opacity-0 transition hover:text-red-500 group-hover:opacity-100 focus:opacity-100"
+                        title={`Delete ${profile.title}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <span
+                        className="shrink-0 text-subtle opacity-0 transition group-hover:opacity-100"
+                        title={`Shared with you — ${profile.title} belongs to someone else`}
+                      >
+                        <Users className="h-3.5 w-3.5" />
+                      </span>
+                    )}
                     <button
                       onClick={() => onOpenProfile(profile.id)}
                       className="shrink-0 text-subtle transition hover:text-ink"

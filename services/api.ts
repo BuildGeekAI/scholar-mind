@@ -360,6 +360,8 @@ export const searchLibraries = (
 // --- Identity ---------------------------------------------------------------
 
 export interface Me {
+  /** This caller's own user id, for deciding what they own. */
+  userId: string;
   email: string;
   name?: string;
   picture?: string;
