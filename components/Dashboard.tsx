@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Plus, Trash2, Search, X, Download, Sun, Moon, Users } from 'lucide-react';
 import { Theme } from './theme';
 import * as api from '../services/api';
-import LandingSearch from './LandingSearch';
+import AskPanel from './AskPanel';
 
 interface DashboardProps {
   profiles: api.ProfileRecord[];
@@ -18,6 +18,25 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, onCreateFor, onCreateProfile, onOpenAdvisors, onSelectProfile, onDeleteProfile }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [subject, setSubject] = useState<string | null>(null);
+
+  /**
+   * Subjects come from the topics a scholar search already resolved, so there is
+   * nothing to tag by hand. Ordered by how many libraries carry each, because a
+   * subject appearing once is a worse filter than one appearing five times.
+   */
+  const subjects = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const profile of profiles) {
+      for (const topic of profile.topics ?? []) {
+        const key = topic.trim();
+        if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 12);
+  }, [profiles]);
   
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString('en-US', {
@@ -28,10 +47,11 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
   };
 
   const filteredProfiles = profiles
-    .filter(p => 
-      p.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    .filter(p =>
+      p.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (p.scholarName || '').toLowerCase().includes(searchTerm.toLowerCase())
     )
+    .filter(p => !subject || (p.topics ?? []).some(t => t.trim() === subject))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
   return (
@@ -101,15 +121,49 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
            </div>
         </div>
 
-        <LandingSearch onOpenProfile={onSelectProfile} onCreateFor={onCreateFor} />
+        <AskPanel
+          libraries={profiles}
+          onOpenProfile={onSelectProfile}
+          onCreateFor={onCreateFor}
+        />
 
         {/* Content Section */}
         <div className="mb-8">
-           <h2 className="text-2xl font-medium text-ink mb-6 flex items-center gap-2">
+           <h2 className="text-2xl font-medium text-ink mb-4 flex items-center gap-2">
              {searchTerm ? (
                <>Search results <span className="text-subtle text-lg font-normal">({filteredProfiles.length})</span></>
-             ) : 'Recent profiles'}
+             ) : subject ? (
+               <>{subject} <span className="text-subtle text-lg font-normal">({filteredProfiles.length})</span></>
+             ) : (
+               <>Your libraries <span className="text-subtle text-lg font-normal">({profiles.length})</span></>
+             )}
            </h2>
+
+           {subjects.length > 0 && (
+             <div className="mb-6 flex flex-wrap gap-2">
+               <button
+                 onClick={() => setSubject(null)}
+                 aria-pressed={subject === null}
+                 className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                   subject === null ? 'bg-ink text-surface' : 'bg-panel-2 text-muted hover:text-ink'
+                 }`}
+               >
+                 All subjects
+               </button>
+               {subjects.map(([name, count]) => (
+                 <button
+                   key={name}
+                   onClick={() => setSubject(s => (s === name ? null : name))}
+                   aria-pressed={subject === name}
+                   className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                     subject === name ? 'bg-ink text-surface' : 'bg-panel-2 text-muted hover:text-ink'
+                   }`}
+                 >
+                   {name} <span className="opacity-60">{count}</span>
+                 </button>
+               ))}
+             </div>
+           )}
            
            {filteredProfiles.length === 0 && searchTerm ? (
              <div className="flex flex-col items-center justify-center py-20 text-subtle">
@@ -117,7 +171,7 @@ const Dashboard: React.FC<DashboardProps> = ({ profiles, theme, onToggleTheme, o
                     <Search className="w-8 h-8 opacity-40" />
                 </div>
                 <p className="font-medium">No profiles found matching "{searchTerm}"</p>
-                <button onClick={() => setSearchTerm('')} className="mt-2 text-blue-600 hover:underline text-sm font-medium">Clear search</button>
+                <button onClick={() => { setSearchTerm(''); setSubject(null); }} className="mt-2 text-blue-600 hover:underline text-sm font-medium">Clear search</button>
              </div>
            ) : (
              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

@@ -620,47 +620,47 @@ export const createRouter = () => {
     const profile = profileId ? await viewable(c, profileId) : null;
     if (profileId && !profile) return c.json({ error: 'Not found' }, 404);
 
-    // Papers only become searchable once they have been processed. Grounding an
-    // empty store just produces "nothing covers this topic", so fall back to the
-    // web and tell the client why.
     let storeNames: string[] = [];
     let indexed = 0;
     let total = 0;
     let searchedLibraries: string[] = [];
     let skippedLibraries = 0;
+    /** Passages retrieved from Postgres, for the cross-library case. */
+    let passages: Awaited<ReturnType<typeof search>> = [];
 
     if (profile) {
+      // One library: File Search, because it holds the papers' *full text* while
+      // the Postgres index holds their prose, and the five-store cap is
+      // irrelevant at one store. Its annotations also carry page-level citations.
       const papers = await repo.listPapers(profile.id);
       indexed = papers.filter(p => p.fileSearchDocName).length;
       total = papers.length;
       if (profile.fileSearchStoreName && indexed) storeNames = [profile.fileSearchStoreName];
       searchedLibraries = indexed ? [profile.title] : [];
-    } else {
-      // A single call accepts at most five stores — six returns 400 (measured).
-      // Most recently touched libraries win, and the client is told what was
-      // left out rather than being quietly given a partial answer.
-      const all = await repo.listProfiles(c.get('ctx'));
-      const withContent = (
-        await Promise.all(
-          all.map(async p => {
-            const papers = await repo.listPapers(p.id);
-            const count = papers.filter(x => x.fileSearchDocName).length;
-            return { profile: p, indexed: count, total: papers.length };
-          })
-        )
-      ).filter(x => x.indexed > 0 && x.profile.fileSearchStoreName);
-
-      withContent.sort((a, b) => b.profile.updatedAt - a.profile.updatedAt);
-      const chosen = withContent.slice(0, MAX_ATTACHED_STORES);
-      storeNames = chosen.map(x => x.profile.fileSearchStoreName!);
-      searchedLibraries = chosen.map(x => x.profile.title);
-      skippedLibraries = withContent.length - chosen.length;
-      indexed = chosen.reduce((n, x) => n + x.indexed, 0);
-      total = withContent.reduce((n, x) => n + x.total, 0);
+    } else if (!useWebSearch) {
+      /**
+       * Across every library: Postgres, not File Search.
+       *
+       * A call accepts at most five stores, so this used to answer from the five
+       * most recently touched libraries and tell the user what it had ignored.
+       * Retrieval here has no such cap and carries the authorization predicate
+       * in the same query, so "everything I can see" means everything.
+       */
+      passages = await search(c.get('ctx'), message, { scope: 'org', limit: 12 });
+      searchedLibraries = [...new Set(passages.map(p => p.profileTitle))];
+      indexed = passages.length;
+      total = passages.length;
     }
 
-    const grounded = !useWebSearch && storeNames.length > 0;
-    const tools = grounded ? [fileSearchTool(storeNames)] : [googleSearchTool()];
+    const grounded = !useWebSearch && (storeNames.length > 0 || passages.length > 0);
+
+    // Passages are already in the prompt, so no tool is attached for the
+    // cross-library case — which is also why it composes with anything.
+    const tools = storeNames.length
+      ? [fileSearchTool(storeNames)]
+      : passages.length
+        ? []
+        : [googleSearchTool()];
 
     const history = profile ? await repo.listMessages(profile.id) : [];
     const transcript = history
@@ -677,11 +677,21 @@ export const createRouter = () => {
         : `You are an expert research assistant helping with a library of papers,
 articles, recordings and videos.`;
 
-    const input = `${preamble}
-${grounded
-  ? 'Answer using the indexed papers available through file search, and cite them.'
-  : 'Answer using live web search.'}
+    const instruction = storeNames.length
+      ? 'Answer using the indexed papers available through file search, and cite them.'
+      : passages.length
+        ? 'Answer only from the passages below, naming the library and paper each point comes from. If they do not cover the question, say so.'
+        : 'Answer using live web search.';
 
+    const passageBlock = passages.length
+      ? `\nPassages from the user's libraries:\n\n${passages
+          .map((p, i) => `[${i + 1}] ${p.profileTitle} — "${p.paperTitle}":\n${p.text}`)
+          .join('\n\n')}\n`
+      : '';
+
+    const input = `${preamble}
+${instruction}
+${passageBlock}
 ${transcript ? `Conversation so far:\n${transcript}\n` : ''}
 User: ${message}`;
 
@@ -724,6 +734,19 @@ User: ${message}`;
           full = extractText(once);
           if (full) await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: full }) });
         }
+        for (const p of passages) {
+          // Exact by construction: these are the passages that went into the
+          // prompt, not something the model said afterwards.
+          const label = `${p.profileTitle} — ${p.paperTitle}`;
+          if (!citations.has(label)) {
+            citations.set(label, {
+              fileName: label,
+              documentUri: '',
+              snippet: p.text.replace(/\s+/g, ' ').trim().slice(0, 280),
+            });
+          }
+        }
+
         if (citations.size) {
           await stream.writeSSE({
             event: 'citations',
