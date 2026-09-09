@@ -1,6 +1,6 @@
 import { Message, Paper } from '../types';
 import { Access, Ctx, Visibility, visibilityPredicate } from './authz';
-import { many, one, query } from './db';
+import { many, one, query, transaction } from './db';
 
 export interface ProfileRecord {
   id: string;
@@ -25,6 +25,15 @@ export interface ProfileRecord {
    * scholar the user already has a library for.
    */
   scholarKeys?: string[];
+
+  // --- Advisor -------------------------------------------------------------
+  /** A profile becomes an advisor when this is set; everything else stays. */
+  advisorEnabled?: boolean;
+  advisorName?: string;
+  advisorTitle?: string;
+  /** Voice and stance only — never facts. See D2 in the advisors plan. */
+  advisorBrief?: string;
+  advisorAvatarKey?: string;
 }
 
 // --- Mapping ------------------------------------------------------------------
@@ -50,6 +59,11 @@ const toProfile = (r: any): ProfileRecord => ({
   topics: r.topics ?? [],
   fileSearchStoreName: r.file_search_store_name ?? undefined,
   scholarKeys: r.scholar_keys ?? [],
+  advisorEnabled: r.advisor_enabled ?? false,
+  advisorName: r.advisor_name ?? undefined,
+  advisorTitle: r.advisor_title ?? undefined,
+  advisorBrief: r.advisor_brief ?? undefined,
+  advisorAvatarKey: r.advisor_avatar_key ?? undefined,
 });
 
 /**
@@ -124,11 +138,15 @@ const paperValues = (paper: Paper): unknown[] =>
 
 // --- Profiles -----------------------------------------------------------------
 
-const PROFILE_SELECT = `
-  SELECT p.id, p.owner_id, p.org_id, p.team_id, p.visibility, p.title, p.emoji,
-         p.theme, p.created_at, p.updated_at, p.scholar_name, p.affiliation,
-         p.topics, p.file_search_store_name, p.scholar_keys
-    FROM profiles p`;
+// Split so a caller can append a computed column without restating the list.
+const PROFILE_COLUMNS = `
+  p.id, p.owner_id, p.org_id, p.team_id, p.visibility, p.title, p.emoji,
+  p.theme, p.created_at, p.updated_at, p.scholar_name, p.affiliation,
+  p.topics, p.file_search_store_name, p.scholar_keys,
+  p.advisor_enabled, p.advisor_name, p.advisor_title, p.advisor_brief,
+  p.advisor_avatar_key`;
+
+const PROFILE_SELECT = `SELECT ${PROFILE_COLUMNS} FROM profiles p`;
 
 export const listProfiles = async (ctx: Ctx): Promise<ProfileRecord[]> =>
   (
@@ -162,8 +180,9 @@ export const createProfile = async (
 ): Promise<ProfileRecord> => {
   const row = await one(
     `INSERT INTO profiles (id, org_id, team_id, owner_id, visibility, title, emoji,
-                           theme, scholar_name, affiliation, topics, scholar_keys)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                           theme, scholar_name, affiliation, topics, scholar_keys,
+                           advisor_enabled, advisor_name, advisor_title, advisor_brief)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
      RETURNING *`,
     [
       partial.id,
@@ -178,6 +197,12 @@ export const createProfile = async (
       partial.affiliation ?? null,
       partial.topics ?? [],
       partial.scholarKeys ?? [],
+      // Accepted here as well as on the advisor endpoint: taking a field in a
+      // Partial<ProfileRecord> and quietly dropping it is worse than refusing it.
+      partial.advisorEnabled ?? false,
+      partial.advisorName ?? null,
+      partial.advisorTitle ?? null,
+      partial.advisorBrief ?? null,
     ]
   );
   return toProfile(row);
@@ -193,6 +218,11 @@ const UPDATABLE: Array<[column: string, field: keyof ProfileRecord]> = [
   ['topics', 'topics'],
   ['file_search_store_name', 'fileSearchStoreName'],
   ['scholar_keys', 'scholarKeys'],
+  ['advisor_enabled', 'advisorEnabled'],
+  ['advisor_name', 'advisorName'],
+  ['advisor_title', 'advisorTitle'],
+  ['advisor_brief', 'advisorBrief'],
+  ['advisor_avatar_key', 'advisorAvatarKey'],
 ];
 
 export const updateProfile = async (
@@ -247,6 +277,154 @@ export const findByScholarKeys = async (ctx: Ctx, keys: string[]): Promise<Profi
       [ctx.userId, keys]
     )
   ).map(toProfile);
+};
+
+export interface AdvisorSummary extends ProfileRecord {
+  /** Papers actually in the search index. An advisor with none knows nothing. */
+  indexedCount: number;
+  /** Whether the caller owns this advisor or is consulting someone else's. */
+  mine: boolean;
+}
+
+/**
+ * Every advisor the caller can see — their own and any shared with them.
+ *
+ * The indexed count comes from `documents`, not from the papers table: a paper
+ * that has not been indexed cannot be retrieved, so counting papers would
+ * promise knowledge the advisor does not have.
+ */
+export const listAdvisors = async (ctx: Ctx): Promise<AdvisorSummary[]> =>
+  (
+    await many(
+      `SELECT ${PROFILE_COLUMNS},
+              (SELECT count(*) FROM documents d WHERE d.profile_id = p.id) AS indexed_count
+         FROM profiles p
+        WHERE p.advisor_enabled
+          AND ${visibilityPredicate('p', '$1', 'view')}
+        ORDER BY p.updated_at DESC`,
+      [ctx.userId]
+    )
+  ).map(r => ({
+    ...toProfile(r),
+    indexedCount: Number(r.indexed_count ?? 0),
+    mine: r.owner_id === ctx.userId,
+  }));
+
+// --- Consultations ------------------------------------------------------------
+
+export interface ConsultationAnswer {
+  profileId: string;
+  advisorName: string;
+  answer: string;
+  citations: unknown[];
+  /** True when the advisor could not be reached at read time — see below. */
+  hidden?: boolean;
+}
+
+export interface Consultation {
+  id: string;
+  question: string;
+  synthesis?: string;
+  createdAt: number;
+  answers: ConsultationAnswer[];
+}
+
+export const saveConsultation = async (
+  ctx: Ctx,
+  question: string,
+  answers: Array<{ profileId: string; advisorName: string; answer: string; citations: unknown[] }>,
+  synthesis?: string
+): Promise<string> =>
+  transaction(async tx => {
+    const { rows } = await tx.query(
+      `INSERT INTO consultations (org_id, team_id, owner_id, question, synthesis)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [ctx.orgId, ctx.teamId, ctx.userId, question, synthesis ?? null]
+    );
+    const id = rows[0].id;
+    for (let i = 0; i < answers.length; i += 1) {
+      const a = answers[i];
+      await tx.query(
+        `INSERT INTO consultation_answers
+           (consultation_id, profile_id, advisor_name, answer, citations, ordinal)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [id, a.profileId, a.advisorName, a.answer, JSON.stringify(a.citations ?? []), i]
+      );
+    }
+    return id as string;
+  });
+
+export const listConsultations = async (ctx: Ctx): Promise<Consultation[]> =>
+  (
+    await many(
+      `SELECT c.id, c.question, c.synthesis, c.created_at,
+              count(a.id) AS answers
+         FROM consultations c
+         LEFT JOIN consultation_answers a ON a.consultation_id = c.id
+        WHERE c.owner_id = $1
+        GROUP BY c.id
+        ORDER BY c.created_at DESC
+        LIMIT 50`,
+      [ctx.userId]
+    )
+  ).map(r => ({
+    id: r.id,
+    question: r.question,
+    synthesis: r.synthesis ?? undefined,
+    createdAt: ms(r.created_at),
+    answers: [],
+  }));
+
+/**
+ * One consultation, with each answer re-checked against the advisor's current
+ * visibility.
+ *
+ * Sharing can be revoked after the fact. A stored answer must not become a way
+ * to keep reading an advisor the owner has since taken back — so the visibility
+ * predicate is applied at read time, not only at consultation time.
+ */
+export const getConsultation = async (ctx: Ctx, id: string): Promise<Consultation | null> => {
+  const head = await one(
+    `SELECT id, question, synthesis, created_at FROM consultations
+      WHERE id = $1 AND owner_id = $2`,
+    [id, ctx.userId]
+  );
+  if (!head) return null;
+
+  const rows = await many(
+    `SELECT a.profile_id, a.advisor_name, a.answer, a.citations,
+            (p.id IS NOT NULL) AS visible
+       FROM consultation_answers a
+       LEFT JOIN profiles p
+              ON p.id = a.profile_id
+             AND ${visibilityPredicate('p', '$2', 'view')}
+      WHERE a.consultation_id = $1
+      ORDER BY a.ordinal`,
+    [id, ctx.userId]
+  );
+
+  return {
+    id: head.id,
+    question: head.question,
+    synthesis: head.synthesis ?? undefined,
+    createdAt: ms(head.created_at),
+    answers: rows.map(r =>
+      r.visible
+        ? {
+            profileId: r.profile_id,
+            advisorName: r.advisor_name,
+            answer: r.answer,
+            citations: r.citations ?? [],
+          }
+        : {
+            profileId: r.profile_id,
+            advisorName: r.advisor_name,
+            answer: 'This advisor is no longer shared with you.',
+            citations: [],
+            hidden: true,
+          }
+    ),
+  };
 };
 
 // --- Shared corpus ------------------------------------------------------------

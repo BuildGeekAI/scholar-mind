@@ -10,6 +10,16 @@ import * as jobs from './jobs';
 import { removePaperFromIndex } from './indexer';
 import { Scope, search } from './search';
 import {
+  AdvisorAnswer,
+  advisorName,
+  askAdvisor,
+  maxPanel,
+  panelConcurrency,
+  pooled,
+  synthesise,
+  systemPrompt,
+} from './advisor';
+import {
   SESSION_COOKIE,
   STATE_COOKIE,
   authorizationUrl,
@@ -650,8 +660,16 @@ export const createRouter = () => {
       .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
       .join('\n');
 
-    const input = `You are an expert research assistant helping with a library of papers,
-articles, recordings and videos.
+    // An advisor profile answers in its own register. One library means the
+    // five-store limit is irrelevant, so this keeps File Search and its
+    // annotations rather than switching to the panel's retrieval path.
+    const preamble =
+      profile?.advisorEnabled
+        ? systemPrompt(profile)
+        : `You are an expert research assistant helping with a library of papers,
+articles, recordings and videos.`;
+
+    const input = `${preamble}
 ${grounded
   ? 'Answer using the indexed papers available through file search, and cite them.'
   : 'Answer using live web search.'}
@@ -1047,6 +1065,113 @@ User: ${message}`;
       limit: Number(c.req.query('limit')) || 20,
     });
     return c.json({ query: q, scope, hits });
+  });
+
+  // --- Advisors ------------------------------------------------------------
+  // An advisor is a profile with a persona. It keeps its library, its crawler,
+  // its index and its sharing — consulting one is reading someone's published
+  // work through a voice, not talking to a simulation of them.
+
+  app.get('/advisors', async c => c.json(await repo.listAdvisors(c.get('ctx'))));
+
+  app.patch('/profiles/:id/advisor', async c => {
+    const profile = await editable(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const { enabled, name, title, brief } = body as {
+      enabled?: boolean;
+      name?: string;
+      title?: string;
+      brief?: string;
+    };
+
+    const updated = await repo.updateProfile(c.get('ctx'), profile.id, {
+      advisorEnabled: enabled ?? profile.advisorEnabled,
+      advisorName: name ?? profile.advisorName,
+      advisorTitle: title ?? profile.advisorTitle,
+      advisorBrief: brief ?? profile.advisorBrief,
+    });
+    return updated ? c.json(updated) : c.json({ error: 'Not found' }, 404);
+  });
+
+  /**
+   * Ask several advisors one question.
+   *
+   * Streamed per advisor rather than returned whole: each is a retrieval plus a
+   * model call, so the first answer arrives in seconds instead of after the
+   * slowest. Retrieval comes from Postgres and no grounding tool is attached —
+   * File Search caps a call at five stores, which is exactly the query a panel
+   * is.
+   */
+  app.post('/consult', async c => {
+    const ctx = c.get('ctx');
+    const body = await c.req.json().catch(() => ({}));
+    const { question, advisorIds, synthesise: wantSynthesis } = body as {
+      question?: string;
+      advisorIds?: string[];
+      synthesise?: boolean;
+    };
+
+    if (!question?.trim()) return c.json({ error: 'question is required' }, 400);
+    if (!advisorIds?.length) return c.json({ error: 'Pick at least one advisor.' }, 400);
+
+    // Unreachable ids are dropped and *reported*. Silently ignoring one would
+    // mean an answer that looks like the panel asked for and is not.
+    const resolved = await Promise.all(advisorIds.slice(0, maxPanel()).map(id => viewable(c, id)));
+    const advisors = resolved.filter((p): p is repo.ProfileRecord => !!p && p.advisorEnabled);
+    const unavailable = advisorIds.length - advisors.length;
+
+    if (!advisors.length) {
+      return c.json({ error: 'None of those advisors are available to you.' }, 404);
+    }
+
+    return streamSSE(c, async stream => {
+      try {
+        const answers: AdvisorAnswer[] = [];
+
+        await pooled(
+          advisors.map(profile => async () => {
+            const answer = await askAdvisor(ctx, profile, question);
+            answers.push(answer);
+            await stream
+              .writeSSE({ event: 'advisor', data: JSON.stringify(answer) })
+              .catch(() => {
+                // The client may have navigated away; the remaining advisors
+                // still run and the consultation is still recorded.
+              });
+            return answer;
+          }),
+          panelConcurrency()
+        );
+
+        const synthesis = wantSynthesis ? await synthesise(question, answers) : undefined;
+        if (synthesis) {
+          await stream.writeSSE({ event: 'synthesis', data: JSON.stringify({ synthesis }) });
+        }
+
+        // Recorded after the fact, so a client that disconnected mid-panel can
+        // still find the answers it missed.
+        const id = await repo.saveConsultation(ctx, question, answers, synthesis);
+
+        await stream.writeSSE({
+          event: 'done',
+          data: JSON.stringify({ consultationId: id, consulted: advisors.length, unavailable }),
+        });
+      } catch (error: any) {
+        console.error('Consultation failed:', error);
+        await stream.writeSSE({
+          event: 'error',
+          data: JSON.stringify({ message: error?.message ?? 'Consultation failed' }),
+        });
+      }
+    });
+  });
+
+  app.get('/consultations', async c => c.json(await repo.listConsultations(c.get('ctx'))));
+
+  app.get('/consultations/:consultationId', async c => {
+    const found = await repo.getConsultation(c.get('ctx'), c.req.param('consultationId'));
+    return found ? c.json(found) : c.json({ error: 'Not found' }, 404);
   });
 
   // --- Crawlers ------------------------------------------------------------

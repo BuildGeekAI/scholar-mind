@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2, Link2, Upload, Sun, Moon } from 'lucide-react';
+import { GraduationCap, ArrowRight, Activity, Palette, Sparkles, Plus, Search, Eraser, Trash2, Save, FilePlus, MessageSquare, ArrowLeft, Edit3, Loader2, Link2, Upload, Sun, Moon, UserRoundCog } from 'lucide-react';
 import { Citation, Paper, Message, ScholarData, AppState } from '../types';
 import { Theme } from './theme';
 import * as api from '../services/api';
+import AdvisorSettings from './AdvisorSettings';
 import PaperList from './PaperList';
 import BlogReader from './BlogReader';
 import CiteDialog from './CiteDialog';
@@ -41,6 +42,7 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isChatOpen, setIsChatOpen] = useState(true);
+  const [showAdvisorSettings, setShowAdvisorSettings] = useState(false);
 
   // Selection State
   const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(new Set());
@@ -582,6 +584,20 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
             </div>
 
             <div className="flex items-center gap-2 ml-4">
+              {/* Turn this library into a consultable advisor */}
+              <button
+                onClick={() => setShowAdvisorSettings(v => !v)}
+                aria-pressed={showAdvisorSettings}
+                className={`p-2 rounded-lg transition-colors ${
+                  profile.advisorEnabled
+                    ? 'text-scholarly-600 hover:bg-panel-2'
+                    : 'text-subtle hover:bg-panel-2 hover:text-ink'
+                }`}
+                title={profile.advisorEnabled ? 'Advisor settings' : 'Make this an advisor'}
+              >
+                <UserRoundCog className="w-5 h-5" />
+              </button>
+
               {/* Clear Session Button */}
               {(scholar || chatMessages.length > 0) && (
                 <button
@@ -613,6 +629,18 @@ const ProfileWorkspace: React.FC<ProfileWorkspaceProps> = ({ profileId, onBack, 
               </button>
             </div>
           </div>
+
+          {showAdvisorSettings && (
+            <div className="mb-4">
+              <AdvisorSettings
+                profile={profile}
+                onSaved={updated => {
+                  setProfile(updated);
+                  setShowAdvisorSettings(false);
+                }}
+              />
+            </div>
+          )}
 
           {/* Toggle for Data Addition */}
           <div className="flex bg-panel-2/50 p-1 rounded-xl mb-4 w-fit border border-line/20">

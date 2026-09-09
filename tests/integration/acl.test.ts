@@ -547,6 +547,219 @@ describe.skipIf(!url)('multi-tenant access control, against Postgres', () => {
     });
   });
 
+  describe('advisors', () => {
+    let advisorModule: typeof import('../../server/advisor');
+    let indexer: typeof import('../../server/indexer');
+
+    const paperFor = (id: string, title: string, text: string): any => ({
+      id,
+      title,
+      authors: ['Author'],
+      year: '1905',
+      summary: text,
+      status: 'discovered',
+    });
+
+    beforeAll(async () => {
+      advisorModule = await import('../../server/advisor');
+      indexer = await import('../../server/indexer');
+
+      // Alice publishes an advisor to the org; Bob keeps one private.
+      await repo.createProfile(alice(), {
+        id: 'adv-shared',
+        title: 'Einstein',
+        visibility: 'org',
+        advisorEnabled: true,
+        advisorName: 'Albert Einstein',
+      });
+      await repo.createProfile(bob(), {
+        id: 'adv-private',
+        title: 'Private advisor',
+        visibility: 'private',
+        advisorEnabled: true,
+        advisorName: 'Someone Private',
+      });
+
+      for (const [profileId, id, text] of [
+        ['adv-shared', 'e1', 'The luminiferous ether will prove superfluous in this framework.'],
+        ['adv-private', 'x1', 'The luminiferous ether appears here too, but privately.'],
+      ] as const) {
+        const paper = paperFor(id, `Paper ${id}`, text);
+        await repo.upsertPaper(profileId, paper);
+        await indexer.indexPaper(profileId, paper);
+      }
+    });
+
+    it('lists an advisor shared with you alongside your own', async () => {
+      const forBob = await repo.listAdvisors(bob());
+      const ids = forBob.map(a => a.id);
+      expect(ids).toContain('adv-shared'); // Alice's, org-visible
+      expect(ids).toContain('adv-private'); // Bob's own
+    });
+
+    it('does not list an advisor that is private to someone else', async () => {
+      const forAlice = await repo.listAdvisors(alice());
+      expect(forAlice.map(a => a.id)).not.toContain('adv-private');
+    });
+
+    it('does not list advisors to another org at all', async () => {
+      expect(await repo.listAdvisors(carol())).toEqual([]);
+    });
+
+    it('counts indexed documents, not papers — an unindexed paper is unanswerable', async () => {
+      await repo.upsertPaper('adv-shared', paperFor('unindexed', 'Never indexed', 'nothing'));
+      const advisor = (await repo.listAdvisors(alice())).find(a => a.id === 'adv-shared');
+      const papers = await repo.listPapers('adv-shared');
+      expect(papers.length).toBeGreaterThan(advisor!.indexedCount);
+      expect(advisor!.indexedCount).toBe(1);
+    });
+
+    it('reports whether an advisor is yours', async () => {
+      const forBob = await repo.listAdvisors(bob());
+      expect(forBob.find(a => a.id === 'adv-private')!.mine).toBe(true);
+      expect(forBob.find(a => a.id === 'adv-shared')!.mine).toBe(false);
+    });
+
+    it('retrieves only from the advisor asked, never from a neighbour', async () => {
+      // Both libraries contain the phrase; scoping must keep them apart.
+      const shared = await repo.getProfile(bob(), 'adv-shared');
+      const answer = await advisorModule.askAdvisor(bob(), shared!, 'luminiferous ether');
+      expect(answer.citations.length).toBeGreaterThan(0);
+      for (const citation of answer.citations) {
+        expect(citation.profileId).toBe('adv-shared');
+      }
+    });
+
+    it('abstains without a model call when nothing relevant is indexed', async () => {
+      const shared = await repo.getProfile(alice(), 'adv-shared');
+      const answer = await advisorModule.askAdvisor(
+        alice(),
+        shared!,
+        'zzz unrelated sourdough baking technique'
+      );
+      expect(answer.abstained).toBe(true);
+      expect(answer.citations).toEqual([]);
+      expect(answer.answer).toMatch(/does not|Nothing in/i);
+    });
+
+    it('every citation corresponds to a passage that was retrieved', async () => {
+      const shared = await repo.getProfile(alice(), 'adv-shared');
+      const answer = await advisorModule.askAdvisor(alice(), shared!, 'luminiferous ether');
+      const hits = await search.search(alice(), 'luminiferous ether', {
+        scope: 'profile',
+        profileId: 'adv-shared',
+      });
+      const retrieved = new Set(hits.map(h => h.paperId));
+      for (const citation of answer.citations) {
+        expect(retrieved.has(citation.paperId)).toBe(true);
+      }
+    });
+
+    it('never throws, so one advisor cannot abort a panel', async () => {
+      const shared = await repo.getProfile(alice(), 'adv-shared');
+      // No GEMINI_API_KEY in this suite, so the model call genuinely fails.
+      await expect(advisorModule.askAdvisor(alice(), shared!, 'ether')).resolves.toMatchObject({
+        profileId: 'adv-shared',
+      });
+    });
+
+    it('consults more than five advisors — the case File Search cannot do', async () => {
+      // Six libraries is where File Search returns 400. This path has no such
+      // limit; the ceiling is cost, and cost is configurable.
+      const ids: string[] = [];
+      for (let i = 0; i < 6; i += 1) {
+        const id = `panel-${i}`;
+        await repo.createProfile(alice(), {
+          id,
+          title: `Advisor ${i}`,
+          advisorEnabled: true,
+          advisorName: `Advisor ${i}`,
+        });
+        const paper = paperFor(`p${i}`, `Paper ${i}`, `Distinctive quokka finding number ${i}.`);
+        await repo.upsertPaper(id, paper);
+        await indexer.indexPaper(id, paper);
+        ids.push(id);
+      }
+
+      const profiles = await Promise.all(ids.map(id => repo.getProfile(alice(), id)));
+      const answers = await advisorModule.pooled(
+        profiles.map(p => () => advisorModule.askAdvisor(alice(), p!, 'quokka')),
+        3
+      );
+
+      expect(answers).toHaveLength(6);
+      // Each drew on its own library and nobody else's.
+      for (let i = 0; i < 6; i += 1) {
+        expect(answers[i].profileId).toBe(`panel-${i}`);
+        for (const citation of answers[i].citations) {
+          expect(citation.profileId).toBe(`panel-${i}`);
+        }
+      }
+    });
+  });
+
+  describe('consultations', () => {
+    it('stores a consultation and reads it back with its citations', async () => {
+      const id = await repo.saveConsultation(
+        alice(),
+        'What of the ether?',
+        [
+          {
+            profileId: 'adv-shared',
+            advisorName: 'Albert Einstein',
+            answer: 'Superfluous.',
+            citations: [{ paperId: 'e1', paperTitle: 'Paper e1', profileId: 'adv-shared', snippet: 's' }],
+          },
+        ],
+        'They agree.'
+      );
+
+      const back = await repo.getConsultation(alice(), id);
+      expect(back!.question).toBe('What of the ether?');
+      expect(back!.synthesis).toBe('They agree.');
+      expect(back!.answers).toHaveLength(1);
+      expect(back!.answers[0].citations).toHaveLength(1);
+    });
+
+    it('is private to whoever asked', async () => {
+      const id = await repo.saveConsultation(alice(), 'mine alone', [], undefined);
+      expect(await repo.getConsultation(bob(), id)).toBeNull();
+      expect((await repo.listConsultations(bob())).map(c => c.id)).not.toContain(id);
+    });
+
+    /**
+     * The one that matters: a stored answer must not become a way to keep
+     * reading an advisor whose owner has since taken it back.
+     */
+    it('hides an answer once its advisor is no longer shared', async () => {
+      await repo.createProfile(alice(), {
+        id: 'adv-revoked',
+        title: 'Revocable',
+        visibility: 'org',
+        advisorEnabled: true,
+        advisorName: 'Revocable Advisor',
+      });
+
+      const id = await repo.saveConsultation(bob(), 'while shared', [
+        {
+          profileId: 'adv-revoked',
+          advisorName: 'Revocable Advisor',
+          answer: 'Something Bob could read at the time.',
+          citations: [],
+        },
+      ]);
+
+      expect((await repo.getConsultation(bob(), id))!.answers[0].answer).toContain('at the time');
+
+      await repo.updateProfile(alice(), 'adv-revoked', { visibility: 'private' });
+
+      const after = await repo.getConsultation(bob(), id);
+      expect(after!.answers[0].hidden).toBe(true);
+      expect(after!.answers[0].answer).not.toContain('at the time');
+      expect(after!.answers[0].citations).toEqual([]);
+    });
+  });
+
   describe('cascades', () => {
     it('takes papers, messages and indexed chunks with the profile', async () => {
       await repo.createProfile(alice(), { id: 'lib-gone', title: 'Doomed' });

@@ -20,6 +20,14 @@ export interface ProfileRecord {
   topics?: string[];
   fileSearchStoreName?: string;
   scholarKeys?: string[];
+
+  /** A profile becomes an advisor when this is set; everything else stays. */
+  advisorEnabled?: boolean;
+  advisorName?: string;
+  advisorTitle?: string;
+  /** Voice and stance only — never facts. */
+  advisorBrief?: string;
+  advisorAvatarKey?: string;
 }
 
 /** Errors carry the response body, so callers can act on a structured refusal. */
@@ -411,6 +419,74 @@ export const createApiKey = (
   send('/keys', 'POST', { name, scope, expiresInDays });
 
 export const revokeApiKey = (id: string): Promise<void> => send(`/keys/${id}`, 'DELETE');
+
+// --- Advisors ---------------------------------------------------------------
+// An advisor is a profile with a persona. Consulting one is reading someone's
+// published work through a voice — never a simulation of the person.
+
+export interface Advisor extends ProfileRecord {
+  /** Papers in the search index. An advisor with none has nothing to draw on. */
+  indexedCount: number;
+  mine: boolean;
+}
+
+export const listAdvisors = (): Promise<Advisor[]> => send('/advisors', 'GET');
+
+export const updateAdvisor = (
+  profileId: string,
+  patch: { enabled?: boolean; name?: string; title?: string; brief?: string }
+): Promise<ProfileRecord> => send(`/profiles/${profileId}/advisor`, 'PATCH', patch);
+
+export interface AdvisorCitation {
+  paperId: string;
+  paperTitle: string;
+  profileId: string;
+  snippet: string;
+}
+
+export interface AdvisorAnswer {
+  profileId: string;
+  advisorName: string;
+  answer: string;
+  citations: AdvisorCitation[];
+  /** The passages did not cover the question, so no answer was invented. */
+  abstained: boolean;
+}
+
+/**
+ * Ask a panel. Streamed per advisor: each is a retrieval plus a model call, so
+ * the first answer arrives well before the last.
+ */
+export const consult = (
+  question: string,
+  advisorIds: string[],
+  options: { synthesise?: boolean } = {},
+  handlers: {
+    onAdvisor: (answer: AdvisorAnswer) => void;
+    onSynthesis?: (text: string) => void;
+    onDone?: (info: { consultationId: string; consulted: number; unavailable: number }) => void;
+    onError?: (message: string) => void;
+  }
+): Promise<void> =>
+  consumeSse('/consult', { question, advisorIds, synthesise: !!options.synthesise }, {
+    advisor: d => handlers.onAdvisor(d as AdvisorAnswer),
+    synthesis: d => handlers.onSynthesis?.(d?.synthesis ?? ''),
+    done: d => handlers.onDone?.(d),
+    error: d => handlers.onError?.(d?.message ?? 'Consultation failed'),
+  });
+
+export interface Consultation {
+  id: string;
+  question: string;
+  synthesis?: string;
+  createdAt: number;
+  answers: Array<AdvisorAnswer & { hidden?: boolean }>;
+}
+
+export const listConsultations = (): Promise<Consultation[]> => send('/consultations', 'GET');
+
+export const getConsultation = (id: string): Promise<Consultation> =>
+  send(`/consultations/${id}`, 'GET');
 
 // --- Crawlers ---------------------------------------------------------------
 
