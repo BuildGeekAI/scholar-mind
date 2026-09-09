@@ -2,6 +2,8 @@ substitutions:
   _REGION: us-central1
   _SERVICE: scholarmind
   _REPO: scholarmind
+  # Cloud SQL instance in PROJECT:REGION:INSTANCE form, attached to both services.
+  _SQL_INSTANCE: ''
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -28,13 +30,47 @@ steps:
       # Private by default: a public URL in front of a Gemini key is a cost liability.
       - --no-allow-unauthenticated
       - --service-account=${_SERVICE}@$PROJECT_ID.iam.gserviceaccount.com
-      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind
-      - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest
+      # ACL_ENABLED is stated rather than left to default off NODE_ENV, because
+      # --set-env-vars replaces the whole variable set and this is the one
+      # variable whose silent absence would be invisible in production.
+      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind,ACL_ENABLED=true
+      - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,DATABASE_URL=scholarmind-database-url:latest
       - --min-instances=0
       - --memory=1Gi
-      # Ingestion plus generation is slow; the default 5 minutes is the ceiling we need.
+      # Requests only enqueue now, so this no longer has to cover a full crawl.
       - --timeout=300s
       - --concurrency=80
+      - --add-cloudsql-instances=${_SQL_INSTANCE}
+
+  # The queue worker: same image, different command. It is a service rather than
+  # a Cloud Run job because the queue is long-lived and pull-based — a job per
+  # unit of work would mean an invocation per paper.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}-worker
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --no-allow-unauthenticated
+      - --service-account=${_SERVICE}@$PROJECT_ID.iam.gserviceaccount.com
+      - --command=npx
+      - --args=tsx,server/worker.ts
+      - --set-env-vars=NODE_ENV=production,GCS_BUCKET=$PROJECT_ID-scholarmind,ACL_ENABLED=true
+      - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,DATABASE_URL=scholarmind-database-url:latest
+      - --add-cloudsql-instances=${_SQL_INSTANCE}
+      # Always one instance: the worker polls, so scaling to zero means nothing
+      # is ever claimed and the queue simply stops draining.
+      - --min-instances=1
+      - --max-instances=4
+      - --memory=1Gi
+      # A paper can take minutes. The heartbeat/reaper pair is what bounds a
+      # worker that dies mid-job, not this.
+      - --timeout=3600s
+      - --concurrency=1
+      - --no-cpu-throttling
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
