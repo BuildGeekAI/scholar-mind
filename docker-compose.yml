@@ -1,0 +1,22 @@
+# Local Postgres, replacing the Firestore emulator. Same engine and extensions
+# as Cloud SQL, so `npm test`'s integration suite and production run one schema.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: scholarmind-db
+    environment:
+      POSTGRES_USER: scholarmind
+      POSTGRES_PASSWORD: scholarmind
+      POSTGRES_DB: scholarmind
+    ports:
+      - '5432:5432'
+    volumes:
+      - scholarmind-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U scholarmind -d scholarmind']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  scholarmind-pgdata:

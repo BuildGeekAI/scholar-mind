@@ -1,8 +1,15 @@
 import { Citation, Message, Paper } from '../types';
 
+export type Visibility = 'private' | 'team' | 'org';
+export type Role = 'viewer' | 'editor' | 'owner';
+
 export interface ProfileRecord {
   id: string;
   ownerId: string;
+  orgId: string;
+  teamId: string;
+  /** Public by default: readable by every member of the owner's org. */
+  visibility: Visibility;
   title: string;
   emoji: string;
   theme: string;
@@ -82,11 +89,17 @@ export interface DuplicateProfile {
   paperCount: number;
 }
 
+/**
+ * Starts a crawl. Resolving a scholar and indexing sixty papers takes minutes,
+ * so this returns a run to poll rather than the papers themselves. The obvious
+ * duplicate still comes back immediately as a 409; the one that needs the
+ * resolved name surfaces on the run as `detail.duplicate`.
+ */
 export const searchScholar = (
   profileId: string,
   query: string,
   allowDuplicate = false
-): Promise<{ profile: ProfileRecord; papers: Paper[] }> =>
+): Promise<{ runId: string | null; profile: ProfileRecord; alreadyRunning?: boolean }> =>
   send(`/profiles/${profileId}/search`, 'POST', { query, allowDuplicate });
 
 export const findPaper = (profileId: string, query: string): Promise<Paper> =>
@@ -200,19 +213,203 @@ const consumeSse = async (path: string, body: unknown, handlers: SseHandlers): P
 /** 'index' makes papers searchable; 'artifacts' writes the blog, slides and media. */
 export type PipelineMode = 'index' | 'artifacts' | 'both';
 
+// --- Runs, status and the queue ---------------------------------------------
+// Processing no longer streams. The work outlives the request that started it —
+// a reload, a navigation or a dead connection must not abandon a crawl — so the
+// request enqueues and returns a run id, and the client polls that.
+
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'cancelled';
+
+export interface Run {
+  id: string;
+  profileId: string;
+  kind: string;
+  status: RunStatus;
+  detail: {
+    /** Present when a crawl stopped because the scholar is already in a library. */
+    duplicate?: DuplicateProfile;
+    papersFound?: number;
+    scholarName?: string;
+    [key: string]: any;
+  };
+  error?: string;
+  startedAt?: number;
+  finishedAt?: number;
+  createdAt: number;
+}
+
+export interface RunProgress {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  total: number;
+}
+
+export type StageState = 'pending' | 'running' | 'done' | 'error' | 'unavailable';
+
+export interface PaperStatus {
+  id: string;
+  title: string;
+  stage: string | null;
+  download: StageState;
+  enrich: StageState;
+  index: StageState;
+}
+
+export const TERMINAL_RUN_STATUSES: RunStatus[] = ['succeeded', 'partial', 'failed', 'cancelled'];
+
+export const isRunFinished = (run: Run | null | undefined): boolean =>
+  !!run && TERMINAL_RUN_STATUSES.includes(run.status);
+
+/** Enqueues the pipeline. Returns the run to poll, or null if it was all already in flight. */
 export const processPapers = (
   profileId: string,
   paperIds: string[],
-  mode: PipelineMode,
-  onPaper: (paper: Paper) => void,
-  onDone?: () => void,
-  onError?: (message: string) => void
-): Promise<void> =>
-  consumeSse(`/profiles/${profileId}/process`, { paperIds, mode }, {
-    paper: onPaper,
-    done: () => onDone?.(),
-    error: d => onError?.(d?.message ?? 'Processing failed'),
-  });
+  mode: PipelineMode
+): Promise<{ runId: string | null; enqueued: number; skipped: number; alreadyRunning?: boolean }> =>
+  send(`/profiles/${profileId}/process`, 'POST', { paperIds, mode });
+
+export const getRun = (runId: string): Promise<{ run: Run; progress: RunProgress }> =>
+  send(`/runs/${runId}`, 'GET');
+
+export const profileStatus = (
+  profileId: string
+): Promise<{ run: Run | null; progress: RunProgress | null; papers: PaperStatus[] }> =>
+  send(`/profiles/${profileId}/status`, 'GET');
+
+// --- Sharing ----------------------------------------------------------------
+
+export interface Grant {
+  id: string;
+  principalType: 'user' | 'team' | 'org';
+  principalId: string;
+  role: Role;
+  email?: string;
+  name?: string;
+}
+
+export interface Sharing {
+  visibility: Visibility;
+  role: Role | null;
+  grants: Grant[];
+  candidates: Array<{ id: string; email: string; name?: string }>;
+}
+
+export const getSharing = (profileId: string): Promise<Sharing> =>
+  send(`/profiles/${profileId}/sharing`, 'GET');
+
+export const shareWith = (
+  profileId: string,
+  email: string,
+  role: Role = 'viewer'
+): Promise<{ ok: boolean; grants: Grant[] }> =>
+  send(`/profiles/${profileId}/sharing`, 'POST', { email, role });
+
+export const unshare = (
+  profileId: string,
+  principalId: string,
+  principalType = 'user'
+): Promise<{ ok: boolean; grants: Grant[] }> =>
+  send(
+    `/profiles/${profileId}/sharing?principalType=${principalType}&principalId=${principalId}`,
+    'DELETE'
+  );
+
+export const setVisibility = (profileId: string, visibility: Visibility): Promise<ProfileRecord> =>
+  updateProfile(profileId, { visibility });
+
+// --- Search -----------------------------------------------------------------
+
+export type SearchScope = 'me' | 'team' | 'org' | 'profile';
+
+export interface SearchHit {
+  chunkId: string;
+  text: string;
+  ordinal: number;
+  paperId: string;
+  paperTitle: string;
+  profileId: string;
+  profileTitle: string;
+  score: number;
+  matched: Array<'keyword' | 'semantic'>;
+}
+
+/** Across every library the caller can reach — however many that is. */
+export const searchLibraries = (
+  q: string,
+  options: { scope?: SearchScope; profileId?: string; limit?: number } = {}
+): Promise<{ query: string; scope: SearchScope; hits: SearchHit[] }> => {
+  const params = new URLSearchParams({ q });
+  if (options.scope) params.set('scope', options.scope);
+  if (options.profileId) params.set('profileId', options.profileId);
+  if (options.limit) params.set('limit', String(options.limit));
+  return send(`/search?${params}`, 'GET');
+};
+
+// --- API keys ---------------------------------------------------------------
+// A key acts as you: it inherits your libraries and your grants exactly, and a
+// scope can only narrow what it may do.
+
+export type KeyScope = 'read' | 'write';
+
+export interface ApiKeyRecord {
+  id: string;
+  name: string;
+  prefix: string;
+  scope: KeyScope;
+  lastUsedAt?: number;
+  expiresAt?: number;
+  createdAt: number;
+}
+
+export const listApiKeys = (): Promise<ApiKeyRecord[]> => send('/keys', 'GET');
+
+/**
+ * The response carries the key itself. It is the only time it is ever
+ * returned — the server stores a hash — so it has to be shown to the user
+ * immediately and cannot be fetched again.
+ */
+export const createApiKey = (
+  name: string,
+  scope: KeyScope = 'read',
+  expiresInDays?: number
+): Promise<{ key: string; record: ApiKeyRecord }> =>
+  send('/keys', 'POST', { name, scope, expiresInDays });
+
+export const revokeApiKey = (id: string): Promise<void> => send(`/keys/${id}`, 'DELETE');
+
+// --- Crawlers ---------------------------------------------------------------
+
+export interface Crawler {
+  id: string;
+  profileId: string;
+  kind: string;
+  target: string;
+  intervalSeconds?: number;
+  enabled: boolean;
+  lastRunAt?: number;
+  nextRunAt?: number;
+}
+
+export const listCrawlers = (profileId?: string): Promise<Crawler[]> =>
+  send(`/crawlers${profileId ? `?profileId=${profileId}` : ''}`, 'GET');
+
+export const createCrawler = (
+  profileId: string,
+  target: string,
+  intervalSeconds?: number
+): Promise<Crawler> => send('/crawlers', 'POST', { profileId, target, intervalSeconds });
+
+export const updateCrawler = (
+  id: string,
+  patch: { target?: string; intervalSeconds?: number | null; enabled?: boolean }
+): Promise<Crawler> => send(`/crawlers/${id}`, 'PATCH', patch);
+
+export const deleteCrawler = (id: string): Promise<void> => send(`/crawlers/${id}`, 'DELETE');
+
+export const runCrawler = (id: string): Promise<{ runId: string }> =>
+  send(`/crawlers/${id}/run`, 'POST');
 
 export const streamChat = (
   /** null asks across every library — what the landing page does. */

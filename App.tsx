@@ -101,7 +101,7 @@ const App: React.FC = () => {
 
   /**
    * Optimistic: deleting a profile also tears down its File Search store, its
-   * Firestore subcollections and its blobs, which takes long enough to feel
+   * rows and its blobs, which takes long enough to feel
    * broken if the UI waits. The row disappears immediately and is restored if
    * the server rejects it.
    */

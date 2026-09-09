@@ -2,6 +2,20 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { LegacyProfile, Message, Paper } from '../types';
 import { resolveUser, User } from './identity';
+import { KeyScope, createKey, listKeys, revokeKey } from './apiKeys';
+import { Ctx, PrincipalType, Role, aclEnabled, findUserByEmail, grantAccess, listGrants, profileRole, revokeAccess } from './authz';
+import { resolveContext, listOrgUsers } from './tenancy';
+import { ping as pingDatabase } from './db';
+import * as jobs from './jobs';
+import { removePaperFromIndex } from './indexer';
+import { Scope, search } from './search';
+import {
+  deleteCrawler,
+  getCrawler,
+  listCrawlers,
+  updateCrawler,
+  upsertCrawler,
+} from './crawler';
 import { blobKey, createBlobStore, profilePrefix } from './blobStore';
 import * as repo from './repository';
 import { createStore, deleteDocument, deleteStore } from './fileSearch';
@@ -13,7 +27,7 @@ import {
   isSupportedUpload,
   kindForMime,
 } from './sources';
-import { PipelineMode, processPapers } from './ingest';
+import { PipelineMode } from './ingest';
 import { buildProfileZip, pcmToWav } from './export';
 import {
   CitationStyle,
@@ -30,12 +44,11 @@ import {
   generateAudio,
   findSinglePaper,
   googleSearchTool,
-  searchScholarAndPapers,
   MODELS,
   ai,
 } from './gemini';
 
-type Env = { Variables: { user: User } };
+type Env = { Variables: { user: User; ctx: Ctx } };
 
 const blobs = createBlobStore();
 
@@ -55,28 +68,74 @@ const sniffImageMime = (data: Buffer): string => {
 export const createRouter = () => {
   const app = new Hono<Env>().basePath('/api');
 
-  app.get('/healthz', c =>
-    c.json({
-      ok: true,
-      geminiKey: process.env.GEMINI_API_KEY ? 'configured' : 'MISSING',
-      firestore: process.env.FIRESTORE_EMULATOR_HOST ? 'emulator' : 'cloud',
-      blobs: process.env.GCS_BUCKET ? 'gcs' : 'filesystem',
-    })
-  );
+  app.get('/healthz', async c => {
+    const database = await pingDatabase();
+    return c.json(
+      {
+        ok: database,
+        geminiKey: process.env.GEMINI_API_KEY ? 'configured' : 'MISSING',
+        database: database ? 'reachable' : 'UNREACHABLE',
+        acl: aclEnabled() ? 'enforced' : 'disabled',
+        blobs: process.env.GCS_BUCKET ? 'gcs' : 'filesystem',
+      },
+      database ? 200 : 503
+    );
+  });
 
   app.use('*', async (c, next) => {
     if (c.req.path === '/api/healthz') return next();
     const user = await resolveUser(c.req.raw.headers);
     if (!user) return c.json({ error: 'Unauthenticated' }, 401);
     c.set('user', user);
+    // Who they are and which tenant they act in are separate questions; the
+    // second needs the database, so it happens here rather than in identity.ts.
+    c.set('ctx', await resolveContext(user));
     await next();
   });
 
-  /** Loads a profile only if the caller owns it. */
-  const owned = async (c: any, id: string) => repo.getProfile(c.get('user').id, id);
+  /**
+   * A read-only key may only make calls that do not change anything.
+   *
+   * Enforced by method, with two exceptions: chat and speech are POSTs because
+   * they carry a body, not because they write. Everything else that is a POST,
+   * PUT, PATCH or DELETE is refused — which is the point of handing someone a
+   * read key at all.
+   */
+  const READ_SAFE_POSTS = new Set(['/api/chat', '/api/tts']);
+
+  app.use('*', async (c, next) => {
+    const user = c.get('user');
+    if (user?.scope !== 'read') return next();
+
+    const method = c.req.method.toUpperCase();
+    const safe =
+      method === 'GET' ||
+      method === 'HEAD' ||
+      method === 'OPTIONS' ||
+      (method === 'POST' && READ_SAFE_POSTS.has(c.req.path));
+
+    if (!safe) {
+      return c.json(
+        { error: 'This API key is read-only. Mint a key with write scope to make changes.' },
+        403
+      );
+    }
+    return next();
+  });
+
+  /**
+   * Loading a profile *is* the authorization check: the predicate is part of the
+   * query, so an unreachable profile is indistinguishable from a missing one and
+   * both answer 404. Three levels, because they are genuinely different rights:
+   * a viewer may read a shared library, an editor may add to it, and only the
+   * owner may destroy it — ownership is not grantable.
+   */
+  const viewable = (c: any, id: string) => repo.getProfile(c.get('ctx'), id, 'view');
+  const editable = (c: any, id: string) => repo.getProfile(c.get('ctx'), id, 'edit');
+  const ownedOnly = (c: any, id: string) => repo.getProfile(c.get('ctx'), id, 'own');
 
   // --- Profiles -----------------------------------------------------------
-  app.get('/profiles', async c => c.json(await repo.listProfiles(c.get('user').id)));
+  app.get('/profiles', async c => c.json(await repo.listProfiles(c.get('ctx'))));
 
   /**
    * The landing page's search. Answers "do I already have this?" before any
@@ -89,7 +148,7 @@ export const createRouter = () => {
 
     const key = scholarKey(q);
     const needle = q.toLowerCase();
-    const profiles = await repo.listProfiles(c.get('user').id);
+    const profiles = await repo.listProfiles(c.get('ctx'));
 
     const scored = await Promise.all(
       profiles.map(async p => {
@@ -128,7 +187,7 @@ export const createRouter = () => {
 
   app.post('/profiles', async c => {
     const body = await c.req.json().catch(() => ({}));
-    const created = await repo.createProfile(c.get('user').id, {
+    const created = await repo.createProfile(c.get('ctx'), {
       id: body.id || crypto.randomUUID(),
       title: body.title,
       emoji: body.emoji,
@@ -137,14 +196,14 @@ export const createRouter = () => {
     // Per-profile retrieval store; absence is tolerated and simply disables RAG.
     const fileSearchStoreName = await createStore(created.title);
     if (fileSearchStoreName) {
-      await repo.updateProfile(c.get('user').id, created.id, { fileSearchStoreName });
+      await repo.updateProfile(c.get('ctx'), created.id, { fileSearchStoreName });
       created.fileSearchStoreName = fileSearchStoreName;
     }
     return c.json(created, 201);
   });
 
   app.get('/profiles/:id', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await viewable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const [papers, messages] = await Promise.all([
       repo.listPapers(profile.id),
@@ -155,34 +214,157 @@ export const createRouter = () => {
 
   app.patch('/profiles/:id', async c => {
     const patch = await c.req.json().catch(() => ({}));
-    const updated = await repo.updateProfile(c.get('user').id, c.req.param('id'), patch);
+    const updated = await repo.updateProfile(c.get('ctx'), c.req.param('id'), patch);
     if (!updated) return c.json({ error: 'Not found' }, 404);
     return c.json(updated);
   });
 
   app.delete('/profiles/:id', async c => {
     const id = c.req.param('id');
-    const profile = await owned(c, id);
+    const profile = await ownedOnly(c, id);
     if (!profile) return c.json({ error: 'Not found' }, 404);
     // Concurrent: the three stores are independent, and deletion latency is
-    // otherwise the sum of a File Search call, a Firestore cascade and a blob sweep.
+    // otherwise the sum of a File Search call, a cascading delete and a blob sweep.
     await Promise.all([
       profile.fileSearchStoreName ? deleteStore(profile.fileSearchStoreName) : Promise.resolve(),
-      repo.deleteProfile(c.get('user').id, id),
+      repo.deleteProfile(c.get('ctx'), id),
       blobs.deleteByPrefix(profilePrefix(id)).catch(e => console.error('Blob cleanup failed:', e)),
     ]);
     return c.json({ ok: true });
   });
 
+  // --- API keys ------------------------------------------------------------
+  // A key authenticates a person who already exists. It acts as them and
+  // inherits their grants exactly, so there is no second permission model to
+  // keep in step with the ACLs — only a scope, which can narrow what the key
+  // may do but never widen it.
+
+  /**
+   * Key management is deliberately closed to key-authenticated callers.
+   *
+   * Otherwise a write key could mint further keys — including ones that outlive
+   * it — and revoking the original would no longer revoke the access it was
+   * used to create. Minting requires a browser or IAP session.
+   */
+  const sessionOnly = (c: any) =>
+    c.get('user').viaKey
+      ? c.json(
+          { error: 'API keys can only be managed from a signed-in session, not with a key.' },
+          403
+        )
+      : null;
+
+  app.get('/keys', async c => c.json(await listKeys(c.get('ctx').userId)));
+
+  app.post('/keys', async c => {
+    const refused = sessionOnly(c);
+    if (refused) return refused;
+
+    const body = await c.req.json().catch(() => ({}));
+    const { name, scope, expiresInDays } = body as {
+      name?: string;
+      scope?: KeyScope;
+      expiresInDays?: number;
+    };
+
+    // Read is the default on purpose: a key pasted into a script or an MCP
+    // client should not be able to delete a library unless that was asked for.
+    const keyScope: KeyScope = scope === 'write' ? 'write' : 'read';
+    const days = Number.isFinite(expiresInDays) ? Number(expiresInDays) : undefined;
+
+    const ctx = c.get('ctx');
+    const minted = await createKey(ctx.userId, ctx.orgId, name ?? 'Untitled key', keyScope, days);
+
+    // The only time the key itself is ever returned. It is stored as a hash and
+    // is not recoverable — losing it means minting another.
+    return c.json({ key: minted.key, record: minted.record }, 201);
+  });
+
+  app.delete('/keys/:keyId', async c => {
+    const refused = sessionOnly(c);
+    if (refused) return refused;
+    const ok = await revokeKey(c.get('ctx').userId, c.req.param('keyId'));
+    return ok ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404);
+  });
+
+  // --- Sharing -------------------------------------------------------------
+  // Visibility is the broad control and lives on the profile itself; grants are
+  // additive on top and name individual people. A grant can only widen access,
+  // never narrow it, so a private library shared with one colleague is readable
+  // by exactly its owner and that colleague.
+
+  app.get('/profiles/:id/sharing', async c => {
+    const profile = await viewable(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+    return c.json({
+      visibility: profile.visibility,
+      role: await profileRole(c.get('ctx'), profile.id),
+      grants: await listGrants(profile.id),
+      // Sharing is with people who already exist; there is no invitation flow,
+      // and a grant to an address nobody has signed in as would match nothing.
+      candidates: await listOrgUsers(c.get('ctx').orgId),
+    });
+  });
+
+  const ROLES: Role[] = ['viewer', 'editor'];
+
+  app.post('/profiles/:id/sharing', async c => {
+    // Only the owner may change who else can reach a library. An editor can add
+    // papers; letting them also add people would make sharing transitive by
+    // accident.
+    const profile = await ownedOnly(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const { email, principalType, principalId, role } = body as {
+      email?: string;
+      principalType?: PrincipalType;
+      principalId?: string;
+      role?: Role;
+    };
+
+    const grantRole: Role = ROLES.includes(role as Role) ? (role as Role) : 'viewer';
+
+    if (email) {
+      const user = await findUserByEmail(email);
+      if (!user) {
+        return c.json(
+          { error: `No user here with the address ${email}. They need to sign in once first.` },
+          404
+        );
+      }
+      if (user.uuid === profile.ownerId) {
+        return c.json({ error: 'That is already the owner of this library.' }, 409);
+      }
+      await grantAccess(c.get('ctx'), profile.id, 'user', user.uuid, grantRole);
+      return c.json({ ok: true, grants: await listGrants(profile.id) }, 201);
+    }
+
+    if (!principalId || !principalType) {
+      return c.json({ error: 'email, or principalType and principalId, are required' }, 400);
+    }
+    await grantAccess(c.get('ctx'), profile.id, principalType, principalId, grantRole);
+    return c.json({ ok: true, grants: await listGrants(profile.id) }, 201);
+  });
+
+  app.delete('/profiles/:id/sharing', async c => {
+    const profile = await ownedOnly(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+    const principalType = (c.req.query('principalType') || 'user') as PrincipalType;
+    const principalId = c.req.query('principalId');
+    if (!principalId) return c.json({ error: 'principalId is required' }, 400);
+    await revokeAccess(profile.id, principalType, principalId);
+    return c.json({ ok: true, grants: await listGrants(profile.id) });
+  });
+
   // --- Papers -------------------------------------------------------------
   app.get('/profiles/:id/papers', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await viewable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     return c.json(await repo.listPapers(profile.id));
   });
 
   app.put('/profiles/:id/papers/:paperId', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const paper = (await c.req.json()) as Paper;
     await repo.upsertPaper(profile.id, { ...paper, id: c.req.param('paperId') });
@@ -190,12 +372,13 @@ export const createRouter = () => {
   });
 
   app.delete('/profiles/:id/papers/:paperId', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const paperId = c.req.param('paperId');
     // Drop the indexed document too, or chat keeps citing a deleted paper.
     const paper = (await repo.listPapers(profile.id)).find(p => p.id === paperId);
     if (paper?.fileSearchDocName) await deleteDocument(paper.fileSearchDocName);
+    await removePaperFromIndex(profile.id, paperId);
     await repo.deletePaper(profile.id, paperId);
     await blobs.deleteByPrefix(`${profilePrefix(profile.id)}${paperId}/`);
     return c.json({ ok: true });
@@ -203,13 +386,13 @@ export const createRouter = () => {
 
   // --- Messages -----------------------------------------------------------
   app.get('/profiles/:id/messages', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await viewable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     return c.json(await repo.listMessages(profile.id));
   });
 
   app.post('/profiles/:id/messages', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const message = (await c.req.json()) as Message;
     await repo.appendMessage(profile.id, message);
@@ -217,7 +400,7 @@ export const createRouter = () => {
   });
 
   app.delete('/profiles/:id/messages', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     await repo.clearMessages(profile.id);
     return c.json({ ok: true });
@@ -230,7 +413,7 @@ export const createRouter = () => {
     const key = c.req.path.replace('/api/blobs/', '');
     const profileId = key.split('/')[1];
     if (!key.startsWith('profiles/') || !profileId) return c.json({ error: 'Bad key' }, 400);
-    if (!(await owned(c, profileId))) return c.json({ error: 'Not found' }, 404);
+    if (!(await viewable(c, profileId))) return c.json({ error: 'Not found' }, 404);
 
     const blob = await blobs.get(key).catch(() => null);
     if (!blob) return c.json({ error: 'Not found' }, 404);
@@ -253,13 +436,13 @@ export const createRouter = () => {
 
   // --- One-time import of the localStorage era ----------------------------
   app.post('/import/localstorage', async c => {
-    const ownerId = c.get('user').id;
+    const ctx = c.get('ctx');
     const legacy = (await c.req.json().catch(() => [])) as LegacyProfile[];
     if (!Array.isArray(legacy)) return c.json({ error: 'Expected an array of profiles' }, 400);
 
     const imported: string[] = [];
     for (const old of legacy) {
-      const profile = await repo.createProfile(ownerId, {
+      const profile = await repo.createProfile(ctx, {
         id: old.id,
         title: old.title,
         emoji: old.emoji,
@@ -318,7 +501,7 @@ export const createRouter = () => {
     if (!message?.trim()) return c.json({ error: 'message is required' }, 400);
 
     // Without a profileId this is the landing page asking across every library.
-    const profile = profileId ? await owned(c, profileId) : null;
+    const profile = profileId ? await viewable(c, profileId) : null;
     if (profileId && !profile) return c.json({ error: 'Not found' }, 404);
 
     // Papers only become searchable once they have been processed. Grounding an
@@ -340,7 +523,7 @@ export const createRouter = () => {
       // A single call accepts at most five stores — six returns 400 (measured).
       // Most recently touched libraries win, and the client is told what was
       // left out rather than being quietly given a partial answer.
-      const all = await repo.listProfiles(c.get('user').id);
+      const all = await repo.listProfiles(c.get('ctx'));
       const withContent = (
         await Promise.all(
           all.map(async p => {
@@ -447,90 +630,62 @@ User: ${message}`;
 
   // --- Discovery ----------------------------------------------------------
   app.post('/profiles/:id/search', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const body = await c.req.json().catch(() => ({ query: '' }));
-    const { query, allowDuplicate } = body;
+    const { query, allowDuplicate, mode } = body;
     if (!query?.trim()) return c.json({ error: 'query is required' }, 400);
 
     /**
      * Building a second library for a scholar the user already has means a
      * second store, a second set of embeddings and a divided chat history — so
-     * it is surfaced rather than silently done. Small profile counts, so this
-     * filters in memory and needs no composite index.
+     * it is surfaced rather than silently done. This is the cheap half of the
+     * check, computable from the query alone and therefore answerable
+     * immediately; the half that needs the resolved name runs in the job, still
+     * before anything is written.
      */
-    const duplicateOf = async (keys: string[]) => {
-      if (allowDuplicate || !keys.length) return null;
-      const mine = await repo.listProfiles(c.get('user').id);
-      const match = mine.find(
-        p => p.id !== profile.id && (p.scholarKeys ?? []).some(k => keys.includes(k))
-      );
-      if (!match) return null;
-      return {
-        id: match.id,
-        title: match.title,
-        scholarName: match.scholarName,
-        paperCount: (await repo.listPapers(match.id)).length,
-      };
-    };
-
-    // Checked before the model call, so an obvious repeat costs nothing.
     const fromQuery = scholarKey(query);
-    const earlyDuplicate = await duplicateOf(fromQuery ? [fromQuery] : []);
-    if (earlyDuplicate) {
-      return c.json({ error: 'You already have a library for this scholar.', duplicate: earlyDuplicate }, 409);
-    }
-
-    try {
-      const result = await searchScholarAndPapers(query);
-
-      // Checked again after resolution, which is what catches "G. Hinton"
-      // matching an existing "Geoffrey Hinton". Papers are not written until
-      // this passes, so a rejected search leaves nothing behind.
-      const keys = scholarKeysFor(query, result.name);
-      const duplicate = await duplicateOf(keys);
-      if (duplicate) {
-        return c.json({ error: 'You already have a library for this scholar.', duplicate }, 409);
-      }
-
-      await repo.upsertPapers(profile.id, result.papers);
-
-      // Name the profile after the scholar rather than leaving the raw query,
-      // which is often a Google Scholar URL. A URL must never become the name.
-      const scholarName =
-        result.name || (scholarKey(query)?.startsWith('name:') ? query : 'Unnamed scholar');
-      const untitled = !profile.title || profile.title === 'Untitled profile';
-      const updated = await repo.updateProfile(c.get('user').id, profile.id, {
-        scholarName,
-        affiliation: result.affiliation,
-        topics: result.topics,
-        scholarKeys: keys,
-        ...(untitled ? { title: scholarName } : {}),
-      });
-      return c.json({ profile: updated, papers: result.papers });
-    } catch (error: any) {
-      // Scholar search re-throws by design so the UI can surface the failure.
-      console.error('Scholar search failed:', error);
-      const raw = error?.message ?? '';
-
-      if (raw.includes('GEMINI_API_KEY is not set')) {
+    if (!allowDuplicate && fromQuery) {
+      const match = (await repo.findByScholarKeys(c.get('ctx'), [fromQuery])).find(
+        p => p.id !== profile.id
+      );
+      if (match) {
         return c.json(
-          { error: 'The server has no Gemini API key. Add GEMINI_API_KEY to .env and restart.' },
-          503
+          {
+            error: 'You already have a library for this scholar.',
+            duplicate: {
+              id: match.id,
+              title: match.title,
+              scholarName: match.scholarName,
+              paperCount: (await repo.listPapers(match.id)).length,
+            },
+          },
+          409
         );
       }
-      if (/API key not valid|API_KEY_INVALID|PERMISSION_DENIED|401|403/.test(raw)) {
-        return c.json({ error: 'The Gemini API key was rejected. Check GEMINI_API_KEY in .env.' }, 502);
-      }
-      if (/429|quota|RESOURCE_EXHAUSTED/.test(raw)) {
-        return c.json({ error: 'API quota exceeded. Please try again in a few minutes.' }, 502);
-      }
-      return c.json({ error: `Failed to find scholar info: ${raw || 'unknown error'}` }, 502);
     }
+
+    // Crawling a scholar with sixty papers takes minutes. The request records
+    // the intent and returns; the worker does the work and the client polls.
+    const ctx = c.get('ctx');
+    const run = await jobs.createRun(ctx, profile.id, 'crawl', { query });
+    const job = await jobs.enqueue(ctx, {
+      type: 'crawl.profile',
+      runId: run.id,
+      payload: { profileId: profile.id, query, mode: mode ?? 'index', allowDuplicate: !!allowDuplicate },
+      dedupeKey: `crawl:${profile.id}`,
+      priority: 1,
+    });
+    if (!job) {
+      await jobs.deleteRun(run.id);
+      const active = await jobs.runForDedupeKeys([`crawl:${profile.id}`]);
+      return c.json({ runId: active, profile, alreadyRunning: true }, 202);
+    }
+    return c.json({ runId: run.id, profile }, 202);
   });
 
   app.post('/profiles/:id/papers/find', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const { query } = await c.req.json().catch(() => ({ query: '' }));
     if (!query?.trim()) return c.json({ error: 'query is required' }, 400);
@@ -553,7 +708,7 @@ User: ${message}`;
   const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
   app.post('/profiles/:id/sources', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const { url } = await c.req.json().catch(() => ({ url: '' }));
     if (!url?.trim()) return c.json({ error: 'url is required' }, 400);
@@ -591,7 +746,7 @@ User: ${message}`;
   });
 
   app.post('/profiles/:id/sources/upload', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
 
     const body = await c.req.parseBody().catch(() => null);
@@ -635,7 +790,7 @@ User: ${message}`;
   });
 
   app.post('/profiles/:id/papers/:paperId/citations', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const papers = await repo.listPapers(profile.id);
     const paper = papers.find(p => p.id === c.req.param('paperId'));
@@ -650,7 +805,7 @@ User: ${message}`;
   // `mode` selects half the pipeline or both: 'index' makes papers searchable,
   // 'artifacts' writes the blog, slides, quiz, audio and illustration.
   app.post('/profiles/:id/process', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await editable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const { paperIds, mode } = await c.req.json().catch(() => ({ paperIds: [] }));
 
@@ -660,35 +815,189 @@ User: ${message}`;
     const all = await repo.listPapers(profile.id);
     const selected = all.filter(p => (paperIds ?? []).includes(p.id));
     if (!selected.length) return c.json({ error: 'No papers selected' }, 400);
-    // Store creation at profile creation is best-effort, so indexing heals a
-    // profile that never got one rather than refusing the request.
-    if (pipelineMode !== 'artifacts' && !profile.fileSearchStoreName) {
-      const storeName = await createStore(profile.title);
-      if (!storeName) return c.json({ error: 'Could not create a search index.' }, 502);
-      await repo.updateProfile(c.get('user').id, profile.id, { fileSearchStoreName: storeName });
-      profile.fileSearchStoreName = storeName;
+
+    const ctx = c.get('ctx');
+    const run = await jobs.createRun(ctx, profile.id, pipelineMode, {
+      papers: selected.length,
+    });
+
+    // One job per paper: a failure cannot abort the rest, each reports its own
+    // progress, and asking twice for the same paper is a no-op while the first
+    // request is still outstanding.
+    const type = ({ index: 'paper.index', artifacts: 'paper.enrich', both: 'paper.process' } as const)[
+      pipelineMode
+    ];
+    const dedupeKeys = selected.map(p => `${pipelineMode}:${profile.id}:${p.id}`);
+    let enqueued = 0;
+    for (const paper of selected) {
+      const job = await jobs.enqueue(ctx, {
+        type,
+        runId: run.id,
+        payload: { profileId: profile.id, paperId: paper.id },
+        dedupeKey: `${pipelineMode}:${profile.id}:${paper.id}`,
+      });
+      if (job) enqueued += 1;
     }
 
-    return streamSSE(c, async stream => {
-      try {
-        await processPapers(
-          profile.id,
-          selected,
-          blobs,
-          profile.fileSearchStoreName,
-          pipelineMode,
-          async paper => {
-            await stream.writeSSE({ event: 'paper', data: JSON.stringify(paper) });
-          }
-        );
-        await stream.writeSSE({ event: 'done', data: '{}' });
-      } catch (error: any) {
-        await stream.writeSSE({
-          event: 'error',
-          data: JSON.stringify({ message: error?.message ?? 'Processing failed' }),
-        });
-      }
+    // Everything asked for is already in flight. Discard the run this request
+    // opened — it holds nothing, and left in place it would become the
+    // profile's latest run and mask the one actually working.
+    if (!enqueued) {
+      await jobs.deleteRun(run.id);
+      const active = await jobs.runForDedupeKeys(dedupeKeys);
+      return c.json({ runId: active, enqueued: 0, skipped: selected.length, alreadyRunning: true }, 202);
+    }
+
+    return c.json({ runId: run.id, enqueued, skipped: selected.length - enqueued }, 202);
+  });
+
+  // --- Runs and status -----------------------------------------------------
+  // Polled, not streamed: the work outlives the request that started it, so a
+  // connection is the wrong thing to hang progress off. The job rows *are* the
+  // status, and `job_events` carries finer detail than the SSE frames it
+  // replaces.
+
+  /** Same body, same ETag — a repeat poll costs one 304 and no serialisation. */
+  const etagged = (c: any, body: unknown) => {
+    const json = JSON.stringify(body);
+    let hash = 5381;
+    for (let i = 0; i < json.length; i += 1) hash = ((hash << 5) + hash + json.charCodeAt(i)) | 0;
+    const etag = `W/"${(hash >>> 0).toString(36)}"`;
+    if (c.req.header('if-none-match') === etag) return c.body(null, 304, { ETag: etag });
+    return c.body(json, 200, { ETag: etag, 'Content-Type': 'application/json' });
+  };
+
+  app.get('/runs/:runId', async c => {
+    const run = await jobs.getRun(c.req.param('runId'));
+    if (!run) return c.json({ error: 'Not found' }, 404);
+    // A run is reachable exactly when its profile is.
+    if (!(await viewable(c, run.profileId))) return c.json({ error: 'Not found' }, 404);
+    return etagged(c, { run, progress: await jobs.runProgress(run.id) });
+  });
+
+  /**
+   * The three lifecycles a user actually asks about, derived from the fields the
+   * pipeline already writes rather than duplicated into columns of their own —
+   * a second copy is a second thing to keep in sync, and the pipeline has
+   * already been bitten by exactly that.
+   */
+  const paperStatus = (paper: Paper) => {
+    const downloading = paper.stage === 'resolving' || paper.stage === 'fetching';
+    const download = downloading
+      ? 'running'
+      : paper.pdfStatus === 'fetched'
+        ? 'done'
+        : paper.pdfStatus === 'unavailable'
+          ? 'unavailable'
+          : paper.pdfStatus === 'error'
+            ? 'error'
+            : 'pending';
+
+    const enrich =
+      paper.status === 'converted'
+        ? 'done'
+        : paper.status === 'error'
+          ? 'error'
+          : paper.status === 'processing' || paper.status === 'downloading'
+            ? 'running'
+            : 'pending';
+
+    const index =
+      paper.indexStatus === 'indexed'
+        ? 'done'
+        : paper.indexStatus === 'error'
+          ? 'error'
+          : paper.indexStatus === 'indexing'
+            ? 'running'
+            : 'pending';
+
+    return { id: paper.id, title: paper.title, stage: paper.stage ?? null, download, enrich, index };
+  };
+
+  app.get('/profiles/:id/status', async c => {
+    const profile = await viewable(c, c.req.param('id'));
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+    const [papers, run] = await Promise.all([
+      repo.listPapers(profile.id),
+      jobs.latestRun(profile.id),
+    ]);
+    return etagged(c, {
+      run,
+      progress: run ? await jobs.runProgress(run.id) : null,
+      papers: papers.map(paperStatus),
     });
+  });
+
+  // --- Search --------------------------------------------------------------
+  // The query File Search cannot answer: one search across every library the
+  // caller can reach, however many that is. Retrieval and the ACL check are the
+  // same query, so there is no post-filter to forget.
+
+  const SCOPES: Scope[] = ['me', 'team', 'org', 'profile'];
+
+  app.get('/search', async c => {
+    const q = c.req.query('q') ?? '';
+    if (!q.trim()) return c.json({ error: 'q is required' }, 400);
+
+    const requested = c.req.query('scope') as Scope | undefined;
+    const profileId = c.req.query('profileId');
+    const scope: Scope = profileId ? 'profile' : SCOPES.includes(requested as Scope) ? (requested as Scope) : 'org';
+
+    const hits = await search(c.get('ctx'), q, {
+      scope,
+      profileId,
+      limit: Number(c.req.query('limit')) || 20,
+    });
+    return c.json({ query: q, scope, hits });
+  });
+
+  // --- Crawlers ------------------------------------------------------------
+  // A crawler is the standing definition; a run is one execution of it.
+
+  app.get('/crawlers', async c =>
+    c.json(await listCrawlers(c.get('ctx'), c.req.query('profileId')))
+  );
+
+  app.post('/crawlers', async c => {
+    const body = await c.req.json().catch(() => ({}));
+    const { profileId, target, intervalSeconds, kind } = body;
+    if (!profileId || !target?.trim()) {
+      return c.json({ error: 'profileId and target are required' }, 400);
+    }
+    const profile = await editable(c, profileId);
+    if (!profile) return c.json({ error: 'Not found' }, 404);
+    return c.json(
+      await upsertCrawler(c.get('ctx'), profileId, target, { kind, intervalSeconds }),
+      201
+    );
+  });
+
+  app.patch('/crawlers/:crawlerId', async c => {
+    const patch = await c.req.json().catch(() => ({}));
+    const updated = await updateCrawler(c.get('ctx'), c.req.param('crawlerId'), patch);
+    if (!updated) return c.json({ error: 'Not found' }, 404);
+    return c.json(updated);
+  });
+
+  app.delete('/crawlers/:crawlerId', async c => {
+    const ok = await deleteCrawler(c.get('ctx'), c.req.param('crawlerId'));
+    return ok ? c.json({ ok: true }) : c.json({ error: 'Not found' }, 404);
+  });
+
+  app.post('/crawlers/:crawlerId/run', async c => {
+    const ctx = c.get('ctx');
+    const crawler = await getCrawler(ctx, c.req.param('crawlerId'));
+    if (!crawler) return c.json({ error: 'Not found' }, 404);
+    const run = await jobs.createRun(ctx, crawler.profileId, 'crawl',
+      { target: crawler.target, manual: true }, crawler.id);
+    await jobs.enqueue(ctx, {
+      type: 'crawl.profile',
+      runId: run.id,
+      payload: { profileId: crawler.profileId, query: crawler.target, mode: 'index', allowDuplicate: true },
+      dedupeKey: `crawl:${crawler.profileId}`,
+      priority: 1,
+    });
+    return c.json({ runId: run.id }, 202);
   });
 
   // --- Citations -----------------------------------------------------------
@@ -714,7 +1023,7 @@ User: ${message}`;
     );
 
   app.get('/profiles/:id/citations', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await viewable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
 
     const style = parseStyle(c.req.query('style'));
@@ -743,7 +1052,7 @@ User: ${message}`;
   });
 
   app.get('/profiles/:id/papers/:paperId/citation', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await viewable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
 
     const style = parseStyle(c.req.query('style'));
@@ -776,7 +1085,7 @@ User: ${message}`;
 
   // --- Export --------------------------------------------------------------
   app.get('/profiles/:id/export', async c => {
-    const profile = await owned(c, c.req.param('id'));
+    const profile = await viewable(c, c.req.param('id'));
     if (!profile) return c.json({ error: 'Not found' }, 404);
     const papers = await repo.listPapers(profile.id);
     const zip = await buildProfileZip(profile, papers, blobs);

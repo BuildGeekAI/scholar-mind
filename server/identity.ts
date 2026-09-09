@@ -1,9 +1,20 @@
 import { timingSafeEqual } from 'node:crypto';
 import { OAuth2Client } from 'google-auth-library';
+import { KeyScope, verifyKey } from './apiKeys';
 
 export interface User {
   id: string;
   email: string;
+  /**
+   * Set only when the caller authenticated with an API key. A browser or IAP
+   * session has no scope — it can do whatever its owner can do. `null` and
+   * `'write'` differ in provenance, not in power.
+   */
+  scope?: KeyScope;
+  /** Which key was used, for revocation and audit. */
+  keyId?: string;
+  /** True for any key-authenticated caller, including the bootstrap key. */
+  viaKey?: boolean;
 }
 
 const IAP_JWT_HEADER = 'x-goog-iap-jwt-assertion';
@@ -25,10 +36,13 @@ const client = new OAuth2Client();
  * reach the service directly could forge it.
  */
 /**
- * Programmatic access — the MCP server, scripts, anything without a browser
- * session. The key is compared in constant time and identifies a single
- * configured user, so an integration reads and writes exactly the library the
- * browser sees.
+ * The deployment-wide bootstrap key.
+ *
+ * Superseded by per-user keys in `apiKeys.ts`, and kept because it is what
+ * existing MCP clients and scripts are configured with. It maps to one
+ * configured identity, so under multi-tenancy every caller presenting it is the
+ * same person — which is exactly why it should not be handed out. Leave it
+ * unset and mint per-user keys instead.
  */
 const apiKey = process.env.SCHOLARMIND_API_KEY || '';
 const apiUser: User = {
@@ -49,24 +63,55 @@ const secretsMatch = (a: string, b: string): boolean => {
   return timingSafeEqual(padded, other) && left.length === right.length;
 };
 
-type KeyOutcome = 'valid' | 'invalid' | 'absent';
+type KeyOutcome = { status: 'valid'; user: User } | { status: 'invalid' } | { status: 'absent' };
 
-const checkApiKey = (headers: Headers): KeyOutcome => {
+const presentedKey = (headers: Headers): string => {
   const bearer = headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-  const presented = headers.get('x-api-key') || bearer || '';
-  if (!presented) return 'absent';
-  return apiKey && secretsMatch(presented, apiKey) ? 'valid' : 'invalid';
+  return headers.get('x-api-key') || bearer || '';
+};
+
+/**
+ * Per-user keys first, then the deployment-wide bootstrap key.
+ *
+ * That order matters: a per-user key carries a real identity and a scope, and
+ * should win over the shared one whenever both would match. In practice they
+ * cannot both match — the formats differ — but relying on that would be relying
+ * on a coincidence.
+ */
+const checkApiKey = async (headers: Headers): Promise<KeyOutcome> => {
+  const presented = presentedKey(headers);
+  if (!presented) return { status: 'absent' };
+
+  const verified = await verifyKey(presented);
+  if (verified) {
+    return {
+      status: 'valid',
+      user: {
+        id: verified.externalId,
+        email: verified.email,
+        scope: verified.scope,
+        keyId: verified.keyId,
+        viaKey: true,
+      },
+    };
+  }
+
+  if (apiKey && secretsMatch(presented, apiKey)) {
+    return { status: 'valid', user: { ...apiUser, viaKey: true } };
+  }
+
+  return { status: 'invalid' };
 };
 
 export const resolveUser = async (headers: Headers): Promise<User | null> => {
   // Checked before anything else, so an API key works in every environment.
-  const outcome = checkApiKey(headers);
-  if (outcome === 'valid') return apiUser;
+  const outcome = await checkApiKey(headers);
+  if (outcome.status === 'valid') return outcome.user;
 
   // A key that was offered and rejected is refused outright, even in
   // development. Falling through to the dev user would mean a misconfigured
   // integration appeared to work locally and failed only in production.
-  if (outcome === 'invalid') return null;
+  if (outcome.status === 'invalid') return null;
 
   if (!isProduction) return DEV_USER;
 
